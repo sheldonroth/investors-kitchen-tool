@@ -79,6 +79,15 @@ const TOOLS: ToolCard[] = [
     gradient: 'from-cyan-500/10 to-blue-500/10',
     iconBg: 'bg-cyan-500/20 text-cyan-400'
   },
+  {
+    id: 'channel',
+    icon: <TrendingUp className="w-5 h-5" strokeWidth={1.5} />,
+    name: 'Channel Analyzer',
+    description: 'Paste any channel for tailored ideas',
+    href: '/channel',
+    gradient: 'from-rose-500/10 to-pink-500/10',
+    iconBg: 'bg-rose-500/20 text-rose-400'
+  },
 ];
 
 const regions = [
