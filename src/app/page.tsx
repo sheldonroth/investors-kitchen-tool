@@ -27,7 +27,7 @@ interface LengthBucket {
 interface MarketHole {
   range: string;
   reason: string;
-  type: 'hot' | 'opportunity';
+  type: 'hot' | 'opportunity' | 'risky';
   emoji: string;
   opportunityScore: number;
 }
@@ -48,6 +48,16 @@ interface Momentum {
   recentPct: number;
   message: string;
   source: string;
+  lifecycle?: {
+    label: string;
+    description: string;
+  };
+}
+
+interface LoyaltyRatio {
+  avgRatio: number;
+  interpretation: string;
+  emoji: string;
 }
 
 interface TitlePatterns {
@@ -77,6 +87,7 @@ interface AnalysisResult {
   optimizationWarning: OptimizationWarning | null;
   relatedQueries: string[];
   momentum: Momentum;
+  loyaltyRatio: LoyaltyRatio;
   titlePatterns: TitlePatterns;
   thumbnailAnalysis: ThumbnailAnalysis | null;
   thumbnailPrompt: string;
@@ -320,7 +331,7 @@ export default function Home() {
             </div>
 
             {/* Stats Row */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="metric-card">
                 <div className="metric-value">{result.totalVideos}</div>
                 <div className="metric-label">Videos</div>
@@ -331,17 +342,22 @@ export default function Home() {
               </div>
               <div className="metric-card">
                 <div className={`metric-value ${result.momentum.status === 'rising' ? 'text-green-600' :
-                    result.momentum.status === 'declining' ? 'text-red-500' : 'text-gray-500'
+                  result.momentum.status === 'declining' ? 'text-red-500' : 'text-gray-500'
                   }`}>
                   {result.momentum.status === 'rising' ? '↑' : result.momentum.status === 'declining' ? '↓' : '→'}
                 </div>
-                <div className="metric-label">{result.momentum.status}</div>
+                <div className="metric-label">{result.momentum.lifecycle?.label || result.momentum.status}</div>
               </div>
               <div className="metric-card">
-                <div className={`metric-value ${result.marketHoles.length > 0 ? 'text-green-600' : 'text-gray-400'}`}>
-                  {result.marketHoles.length}
+                <div className={`metric-value ${result.marketHoles.filter(h => h.type !== 'risky').length > 0 ? 'text-green-600' : 'text-gray-400'}`}>
+                  {result.marketHoles.filter(h => h.type !== 'risky').length}
                 </div>
                 <div className="metric-label">Opportunities</div>
+              </div>
+              <div className="metric-card">
+                <div className="metric-value">{result.loyaltyRatio.emoji}</div>
+                <div className="metric-label">Audience</div>
+                <div className="text-xs text-gray-500 mt-1">{result.loyaltyRatio.avgRatio}x ratio</div>
               </div>
             </div>
 
@@ -397,11 +413,20 @@ export default function Home() {
                 {result.marketHoles.length > 0 ? (
                   <div className="space-y-3">
                     {result.marketHoles.map((hole, i) => (
-                      <div key={i} className={`alert ${hole.type === 'hot' ? 'alert-warning' : 'alert-success'}`}>
+                      <div key={i} className={`alert ${hole.type === 'hot' ? 'alert-warning' :
+                        hole.type === 'risky' ? 'bg-gray-50 border-l-gray-400' :
+                          'alert-success'
+                        }`}>
                         <div className="flex items-center justify-between mb-1">
-                          <span className="font-semibold text-gray-900">{hole.range}</span>
-                          <span className={`badge ${hole.type === 'hot' ? 'badge-warning' : 'badge-success'}`}>
-                            Score {hole.opportunityScore}
+                          <span className="font-semibold text-gray-900 flex items-center gap-2">
+                            <span>{hole.emoji}</span>
+                            {hole.range}
+                          </span>
+                          <span className={`badge ${hole.type === 'hot' ? 'badge-warning' :
+                            hole.type === 'risky' ? 'bg-gray-200 text-gray-600' :
+                              'badge-success'
+                            }`}>
+                            {hole.type === 'risky' ? 'Risky' : `Score ${hole.opportunityScore}`}
                           </span>
                         </div>
                         <p className="text-sm text-gray-600">{hole.reason}</p>
@@ -424,7 +449,7 @@ export default function Home() {
                 <div className="mb-4 p-4 bg-gray-50 rounded-xl">
                   <div className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-1">Search Trend</div>
                   <div className={`text-2xl font-bold ${result.momentum.trendChange && result.momentum.trendChange > 0 ? 'text-green-600' :
-                      result.momentum.trendChange && result.momentum.trendChange < 0 ? 'text-red-500' : 'text-gray-900'
+                    result.momentum.trendChange && result.momentum.trendChange < 0 ? 'text-red-500' : 'text-gray-900'
                     }`}>
                     {result.momentum.trendChange !== null && result.momentum.trendChange !== undefined ? (
                       `${result.momentum.trendChange > 0 ? '+' : ''}${result.momentum.trendChange}%`
@@ -445,11 +470,21 @@ export default function Home() {
 
                 {/* AI Insight */}
                 {result.thumbnailAnalysis?.geminiInsights && (
-                  <div className="alert alert-info">
+                  <div className="alert alert-info mb-4">
                     <div className="font-medium mb-1">🤖 AI Thumbnail Analysis</div>
                     <p className="text-sm">{result.thumbnailAnalysis.geminiInsights}</p>
                   </div>
                 )}
+
+                {/* Loyalty Ratio */}
+                <div className="p-4 bg-gray-50 rounded-xl">
+                  <div className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-1">Audience Loyalty</div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">{result.loyaltyRatio.emoji}</span>
+                    <span className="font-semibold text-gray-900">{result.loyaltyRatio.avgRatio}x</span>
+                  </div>
+                  <p className="text-sm text-gray-600 mt-1">{result.loyaltyRatio.interpretation}</p>
+                </div>
               </div>
             </div>
 

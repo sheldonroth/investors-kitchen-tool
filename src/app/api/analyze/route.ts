@@ -29,6 +29,7 @@ function categorizeDuration(seconds: number): string {
 interface VideoData {
     id: string;
     title: string;
+    channelId: string;
     channelTitle: string;
     publishedAt: string;
     views: number;
@@ -37,6 +38,82 @@ interface VideoData {
     durationSec: number;
     lengthCategory: string;
     thumbnail: string;
+}
+
+// ===== NEW: Loyalty Ratio =====
+interface ChannelStats {
+    id: string;
+    subscribers: number;
+    viewCount: number;
+}
+
+async function getChannelStats(channelIds: string[]): Promise<ChannelStats[]> {
+    if (!YOUTUBE_API_KEY || channelIds.length === 0) return [];
+
+    try {
+        const response = await axios.get(`${BASE_URL}/channels`, {
+            params: {
+                part: 'statistics',
+                id: channelIds.slice(0, 50).join(','),
+                key: YOUTUBE_API_KEY
+            }
+        });
+
+        return response.data.items.map((item: {
+            id: string;
+            statistics: { subscriberCount?: string; viewCount?: string };
+        }) => ({
+            id: item.id,
+            subscribers: parseInt(item.statistics.subscriberCount || '0', 10),
+            viewCount: parseInt(item.statistics.viewCount || '0', 10)
+        }));
+    } catch {
+        return [];
+    }
+}
+
+function calculateLoyaltyRatio(channelStats: ChannelStats[], videosByChannel: Map<string, number[]>): {
+    avgRatio: number;
+    interpretation: string;
+    emoji: string;
+} {
+    if (channelStats.length === 0) {
+        return { avgRatio: 0, interpretation: 'Unable to calculate', emoji: '❓' };
+    }
+
+    const ratios: number[] = [];
+
+    for (const channel of channelStats) {
+        const videoViews = videosByChannel.get(channel.id);
+        if (videoViews && videoViews.length > 0) {
+            const avgChannelViews = videoViews.reduce((a, b) => a + b, 0) / videoViews.length;
+            if (avgChannelViews > 0 && channel.subscribers > 0) {
+                ratios.push(channel.subscribers / avgChannelViews);
+            }
+        }
+    }
+
+    if (ratios.length === 0) {
+        return { avgRatio: 0, interpretation: 'Unable to calculate', emoji: '❓' };
+    }
+
+    const avgRatio = ratios.reduce((a, b) => a + b, 0) / ratios.length;
+
+    let interpretation: string;
+    let emoji: string;
+
+    if (avgRatio > 2) {
+        interpretation = 'High loyalty — channels build lasting audiences';
+        emoji = '💙';
+    } else if (avgRatio > 1) {
+        interpretation = 'Moderate loyalty — mix of regulars and one-timers';
+        emoji = '💛';
+    } else {
+        interpretation = 'Low loyalty — viral/transient viewership dominates';
+        emoji = '❤️';
+    }
+
+    return { avgRatio: Math.round(avgRatio * 100) / 100, interpretation, emoji };
 }
 
 interface DurationBucket {
@@ -232,7 +309,7 @@ export async function GET(request: NextRequest) {
 
         const videos: VideoData[] = statsResponse.data.items.map((item: {
             id: string;
-            snippet: { title: string; channelTitle: string; publishedAt: string; thumbnails: { high?: { url: string } } };
+            snippet: { title: string; channelId: string; channelTitle: string; publishedAt: string; thumbnails: { high?: { url: string } } };
             contentDetails: { duration: string };
             statistics: { viewCount?: string; likeCount?: string };
         }) => {
@@ -240,6 +317,7 @@ export async function GET(request: NextRequest) {
             return {
                 id: item.id,
                 title: item.snippet.title,
+                channelId: item.snippet.channelId,
                 channelTitle: item.snippet.channelTitle,
                 publishedAt: item.snippet.publishedAt,
                 views: parseInt(item.statistics.viewCount || '0', 10),
@@ -250,6 +328,19 @@ export async function GET(request: NextRequest) {
                 thumbnail: item.snippet.thumbnails.high?.url || ''
             };
         });
+
+        // ===== NEW: Calculate Loyalty Ratio =====
+        const uniqueChannelIds = [...new Set(videos.map(v => v.channelId))];
+        const channelStats = await getChannelStats(uniqueChannelIds);
+
+        const videosByChannel = new Map<string, number[]>();
+        for (const video of videos) {
+            const existing = videosByChannel.get(video.channelId) || [];
+            existing.push(video.views);
+            videosByChannel.set(video.channelId, existing);
+        }
+
+        const loyaltyRatio = calculateLoyaltyRatio(channelStats, videosByChannel);
 
         // Sort by views for top performer analysis
         const sortedByViews = [...videos].sort((a, b) => b.views - a.views);
@@ -295,34 +386,49 @@ export async function GET(request: NextRequest) {
             };
         });
 
-        // Find market holes
+        // ===== IMPROVED: Find market holes with risky classification =====
         const holes = analysis
             .filter(a => {
                 const isLowCompetition = a.count < avgCountPerCategory * 0.8;
                 const isHighDemand = a.avgViews >= overallAvgViews;
-                return isLowCompetition && isHighDemand && a.count > 0;
+                const isLowDemand = a.avgViews < overallAvgViews * 0.7;
+                // Include opportunities AND risky (low comp + low demand)
+                return (isLowCompetition && isHighDemand && a.count > 0) ||
+                    (isLowCompetition && isLowDemand && a.count > 0);
             })
             .map(a => {
                 const isVeryLowComp = a.count < avgCountPerCategory * 0.5;
                 const isVeryHighDemand = a.avgViews > overallAvgViews * 1.5;
+                const isLowDemand = a.avgViews < overallAvgViews * 0.7;
 
-                let type: 'hot' | 'opportunity' = 'opportunity';
+                let type: 'hot' | 'opportunity' | 'risky' = 'opportunity';
                 let emoji = '✅';
 
                 if (isVeryLowComp && isVeryHighDemand) {
                     type = 'hot';
                     emoji = '🔥';
+                } else if (isVeryLowComp && isLowDemand) {
+                    type = 'risky';
+                    emoji = '⚠️';
                 }
+
+                const reason = type === 'risky'
+                    ? `Low competition but also low views (${a.avgViews.toLocaleString()} avg) — may lack demand`
+                    : `${a.count} videos (${Math.round((a.count / videos.length) * 100)}% of results) with ${a.avgViews.toLocaleString()} avg views`;
 
                 return {
                     range: a.range,
                     type,
                     emoji,
-                    reason: `${a.count} videos (${Math.round((a.count / videos.length) * 100)}% of results) with ${a.avgViews.toLocaleString()} avg views`,
-                    opportunityScore: a.opportunityScore
+                    reason,
+                    opportunityScore: type === 'risky' ? 0 : a.opportunityScore
                 };
             })
-            .sort((a, b) => b.opportunityScore - a.opportunityScore);
+            .sort((a, b) => {
+                // Sort: hot first, then opportunity, then risky
+                const order = { hot: 0, opportunity: 1, risky: 2 };
+                return order[a.type] - order[b.type] || b.opportunityScore - a.opportunityScore;
+            });
 
         // ===== IMPROVED: Optimization Warning =====
         const maxCount = Math.max(...analysis.map(a => a.count));
@@ -347,7 +453,23 @@ export async function GET(request: NextRequest) {
         const recentVideos = videos.filter(v => daysSince(v.publishedAt) < 30);
         const recentPct = Math.round((recentVideos.length / videos.length) * 100);
 
+        // ===== IMPROVED: Lifecycle Labels =====
+        function getLifecycleLabel(status: string, recentPct: number, avgAge: number): { label: string; description: string } {
+            if (status === 'rising' || recentPct > 40) {
+                return { label: '🚀 Rising', description: 'Growing niche with new creator success' };
+            } else if (status === 'declining') {
+                return { label: '📉 Declining', description: 'Shrinking search interest' };
+            } else if (avgAge > 365 && recentPct < 15) {
+                return { label: '⚠️ Stale', description: 'Dominated by old videos, hard to break in' };
+            } else {
+                return { label: '➡️ Stable', description: 'Mature niche with consistent demand' };
+            }
+        }
+
         // Use Google Trends if available, fallback to upload recency
+        const baseStatus = trendsData?.direction || (recentPct > 30 ? 'rising' : avgUploadAge < 180 ? 'stable' : 'declining');
+        const lifecycle = getLifecycleLabel(baseStatus, recentPct, avgUploadAge);
+
         const momentum = trendsData ? {
             status: trendsData.direction,
             emoji: trendsData.emoji,
@@ -355,7 +477,8 @@ export async function GET(request: NextRequest) {
             avgUploadAgeDays: avgUploadAge,
             recentPct,
             message: `${trendsData.change > 0 ? '+' : ''}${trendsData.change}% search interest over 90 days`,
-            source: 'google_trends'
+            source: 'google_trends',
+            lifecycle
         } : {
             status: recentPct > 30 ? 'rising' : avgUploadAge < 180 ? 'stable' : 'declining',
             emoji: recentPct > 30 ? '📈' : avgUploadAge < 180 ? '➡️' : '📉',
@@ -363,7 +486,8 @@ export async function GET(request: NextRequest) {
             avgUploadAgeDays: avgUploadAge,
             recentPct,
             message: `${recentPct}% of top results uploaded in last 30 days`,
-            source: 'upload_recency'
+            source: 'upload_recency',
+            lifecycle
         };
 
         // Title patterns
@@ -409,6 +533,7 @@ export async function GET(request: NextRequest) {
             optimizationWarning,
             relatedQueries: autocompleteResults,
             momentum,
+            loyaltyRatio,
             titlePatterns,
             thumbnailAnalysis,
             thumbnailPrompt
