@@ -64,6 +64,7 @@ interface ThumbnailAnalysis {
   dominantColors: string[];
   hasText: boolean;
   detectedLabels: string[];
+  geminiInsights?: string;
 }
 
 interface AnalysisResult {
@@ -168,8 +169,8 @@ export default function Home() {
             <div className="grid md:grid-cols-2 gap-4">
               {/* Momentum Tracker */}
               <div className={`rounded-2xl p-5 border ${result.momentum.status === 'rising' ? 'bg-green-900/20 border-green-500/30' :
-                  result.momentum.status === 'declining' ? 'bg-red-900/20 border-red-500/30' :
-                    'bg-slate-800/50 border-slate-700'
+                result.momentum.status === 'declining' ? 'bg-red-900/20 border-red-500/30' :
+                  'bg-slate-800/50 border-slate-700'
                 }`}>
                 <div className="flex items-center gap-3 mb-2">
                   <span className="text-3xl">{result.momentum.emoji}</span>
@@ -306,10 +307,10 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Thumbnail Analysis from Vision API */}
+                {/* Thumbnail Analysis from Gemini Pro */}
                 {result.thumbnailAnalysis && (
                   <div className="border-t border-slate-700 pt-4 mt-4">
-                    <p className="text-sm text-blue-400 mb-2">🔬 Vision API Analysis (Top 5)</p>
+                    <p className="text-sm text-blue-400 mb-2">🤖 Gemini Pro Analysis (Top 3)</p>
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       <div className="bg-slate-700/50 rounded p-2">
                         <span className="text-slate-400">Faces:</span>
@@ -320,6 +321,11 @@ export default function Home() {
                         <span className="text-white ml-1">{result.thumbnailAnalysis.hasText ? 'Yes' : 'No'}</span>
                       </div>
                     </div>
+                    {result.thumbnailAnalysis.geminiInsights && (
+                      <p className="mt-3 text-sm text-slate-300 bg-blue-500/10 rounded p-3 border border-blue-500/20">
+                        💡 {result.thumbnailAnalysis.geminiInsights}
+                      </p>
+                    )}
                     {result.thumbnailAnalysis.detectedLabels.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1">
                         {result.thumbnailAnalysis.detectedLabels.map((label, i) => (

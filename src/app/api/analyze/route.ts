@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
 import googleTrends from 'google-trends-api';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
-const VISION_API_KEY = process.env.GOOGLE_CLOUD_VISION_API_KEY || process.env.YOUTUBE_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.YOUTUBE_API_KEY;
 const BASE_URL = 'https://www.googleapis.com/youtube/v3';
 
 function parseDuration(isoDuration: string): number {
@@ -44,14 +45,6 @@ interface DurationBucket {
     totalViews: number;
     avgViews: number;
     videos: VideoData[];
-}
-
-interface ThumbnailAnalysis {
-    hasFaces: boolean;
-    faceCount: number;
-    dominantColors: string[];
-    hasText: boolean;
-    detectedLabels: string[];
 }
 
 // ===== IMPROVEMENT 1: YouTube Autocomplete API =====
@@ -120,69 +113,74 @@ async function getTrendData(query: string): Promise<{ direction: string; change:
     }
 }
 
-// ===== IMPROVEMENT 3: Vision API Thumbnail Analysis =====
-async function analyzeThumbnails(thumbnailUrls: string[]): Promise<ThumbnailAnalysis | null> {
-    if (!VISION_API_KEY || thumbnailUrls.length === 0) return null;
+// ===== IMPROVEMENT 3: Gemini Pro Thumbnail Analysis =====
+interface GeminiThumbnailAnalysis {
+    hasFaces: boolean;
+    faceCount: number;
+    dominantColors: string[];
+    hasText: boolean;
+    detectedLabels: string[];
+    geminiInsights?: string;
+}
+
+async function analyzeThumbnails(thumbnailUrls: string[], query: string): Promise<GeminiThumbnailAnalysis | null> {
+    if (!GEMINI_API_KEY || thumbnailUrls.length === 0) return null;
 
     try {
-        const requests = thumbnailUrls.slice(0, 5).map(url => ({
-            image: { source: { imageUri: url } },
-            features: [
-                { type: 'FACE_DETECTION', maxResults: 5 },
-                { type: 'IMAGE_PROPERTIES', maxResults: 5 },
-                { type: 'TEXT_DETECTION', maxResults: 5 },
-                { type: 'LABEL_DETECTION', maxResults: 10 }
-            ]
-        }));
+        const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
-        const response = await axios.post(
-            `https://vision.googleapis.com/v1/images:annotate?key=${VISION_API_KEY}`,
-            { requests }
-        );
-
-        const results = response.data.responses;
-
-        // Aggregate results
-        let totalFaces = 0;
-        let hasText = false;
-        const allColors: string[] = [];
-        const allLabels: string[] = [];
-
-        for (const r of results) {
-            if (r.faceAnnotations) {
-                totalFaces += r.faceAnnotations.length;
+        // Fetch thumbnails as base64
+        const imagePromises = thumbnailUrls.slice(0, 3).map(async (url) => {
+            try {
+                const response = await axios.get(url, { responseType: 'arraybuffer' });
+                const base64 = Buffer.from(response.data).toString('base64');
+                return {
+                    inlineData: {
+                        data: base64,
+                        mimeType: 'image/jpeg'
+                    }
+                };
+            } catch {
+                return null;
             }
-            if (r.textAnnotations && r.textAnnotations.length > 0) {
-                hasText = true;
-            }
-            if (r.imagePropertiesAnnotation?.dominantColors?.colors) {
-                const topColor = r.imagePropertiesAnnotation.dominantColors.colors[0];
-                if (topColor?.color) {
-                    const c = topColor.color;
-                    allColors.push(`rgb(${c.red || 0},${c.green || 0},${c.blue || 0})`);
-                }
-            }
-            if (r.labelAnnotations) {
-                allLabels.push(...r.labelAnnotations.map((l: { description: string }) => l.description));
-            }
-        }
+        });
 
-        // Get unique top labels
-        const labelFreq: Record<string, number> = {};
-        allLabels.forEach(l => { labelFreq[l] = (labelFreq[l] || 0) + 1; });
-        const topLabels = Object.entries(labelFreq)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 5)
-            .map(([label]) => label);
+        const allImages = await Promise.all(imagePromises);
+        const images = allImages.filter((img): img is { inlineData: { data: string; mimeType: string } } => img !== null);
+        if (images.length === 0) return null;
+
+        const prompt = `Analyze these ${images.length} YouTube thumbnails for the search query "${query}".
+
+Respond in this exact JSON format only, no other text:
+{
+  "hasFaces": true/false,
+  "faceCount": number,
+  "dominantColors": ["color1", "color2", "color3"],
+  "hasText": true/false,
+  "detectedLabels": ["label1", "label2", "label3", "label4", "label5"],
+  "insights": "2-3 sentences about what makes these thumbnails effective and what a competitor could do differently"
+}`;
+
+        const result = await model.generateContent([prompt, ...images]);
+        const text = result.response.text();
+
+        // Parse JSON from response
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) return null;
+
+        const parsed = JSON.parse(jsonMatch[0]);
 
         return {
-            hasFaces: totalFaces > 0,
-            faceCount: totalFaces,
-            dominantColors: [...new Set(allColors)].slice(0, 3),
-            hasText,
-            detectedLabels: topLabels
+            hasFaces: parsed.hasFaces ?? false,
+            faceCount: parsed.faceCount ?? 0,
+            dominantColors: parsed.dominantColors ?? [],
+            hasText: parsed.hasText ?? false,
+            detectedLabels: parsed.detectedLabels ?? [],
+            geminiInsights: parsed.insights
         };
-    } catch {
+    } catch (error) {
+        console.error('Gemini thumbnail analysis failed:', error);
         return null;
     }
 }
@@ -258,7 +256,7 @@ export async function GET(request: NextRequest) {
         const topThumbnails = sortedByViews.slice(0, 5).map(v => v.thumbnail);
 
         // Analyze thumbnails (runs async, may be null if no Vision API key)
-        const thumbnailAnalysis = await analyzeThumbnails(topThumbnails);
+        const thumbnailAnalysis = await analyzeThumbnails(topThumbnails, query);
 
         // Duration bucket analysis
         const durationBuckets: Record<string, DurationBucket> = {};
