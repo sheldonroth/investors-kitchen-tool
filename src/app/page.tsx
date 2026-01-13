@@ -41,11 +41,13 @@ interface OptimizationWarning {
 }
 
 interface Momentum {
-  status: 'rising' | 'stable' | 'declining';
+  status: string;
   emoji: string;
+  trendChange?: number | null;
   avgUploadAgeDays: number;
   recentPct: number;
   message: string;
+  source: string;
 }
 
 interface TitlePatterns {
@@ -56,9 +58,12 @@ interface TitlePatterns {
   avgTitleLength: number;
 }
 
-interface DiversificationKeyword {
-  word: string;
-  count: number;
+interface ThumbnailAnalysis {
+  hasFaces: boolean;
+  faceCount: number;
+  dominantColors: string[];
+  hasText: boolean;
+  detectedLabels: string[];
 }
 
 interface AnalysisResult {
@@ -69,9 +74,10 @@ interface AnalysisResult {
   lengthAnalysis: LengthBucket[];
   marketHoles: MarketHole[];
   optimizationWarning: OptimizationWarning | null;
-  diversificationKeywords: DiversificationKeyword[];
+  relatedQueries: string[];
   momentum: Momentum;
   titlePatterns: TitlePatterns;
+  thumbnailAnalysis: ThumbnailAnalysis | null;
   thumbnailPrompt: string;
 }
 
@@ -82,15 +88,17 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [showPrompt, setShowPrompt] = useState(false);
 
-  const handleAnalyze = async () => {
-    if (!query.trim()) return;
+  const handleAnalyze = async (searchQuery?: string) => {
+    const q = searchQuery || query;
+    if (!q.trim()) return;
 
     setLoading(true);
     setError(null);
     setResult(null);
+    if (searchQuery) setQuery(searchQuery);
 
     try {
-      const res = await fetch(`/api/analyze?q=${encodeURIComponent(query)}&max=50`);
+      const res = await fetch(`/api/analyze?q=${encodeURIComponent(q)}&max=50`);
       const data = await res.json();
 
       if (!res.ok) {
@@ -103,11 +111,6 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleKeywordClick = (keyword: string) => {
-    setQuery(keyword);
-    setTimeout(() => handleAnalyze(), 100);
   };
 
   const copyPrompt = () => {
@@ -142,7 +145,7 @@ export default function Home() {
               className="flex-1 px-6 py-4 rounded-xl bg-slate-800/50 border border-slate-700 text-white placeholder-slate-400 focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none transition-all"
             />
             <button
-              onClick={handleAnalyze}
+              onClick={() => handleAnalyze()}
               disabled={loading || !query.trim()}
               className="px-8 py-4 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 disabled:cursor-not-allowed font-semibold transition-all shadow-lg shadow-purple-500/25"
             >
@@ -171,9 +174,16 @@ export default function Home() {
                 <div className="flex items-center gap-3 mb-2">
                   <span className="text-3xl">{result.momentum.emoji}</span>
                   <h2 className="text-xl font-bold text-white capitalize">{result.momentum.status} Niche</h2>
+                  {result.momentum.source === 'google_trends' && (
+                    <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded">Google Trends</span>
+                  )}
                 </div>
                 <p className="text-slate-400 text-sm">{result.momentum.message}</p>
-                <p className="text-slate-500 text-xs mt-1">Avg upload age: {result.momentum.avgUploadAgeDays} days</p>
+                {result.momentum.trendChange !== null && result.momentum.trendChange !== undefined && (
+                  <p className={`text-lg font-semibold mt-1 ${result.momentum.trendChange > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {result.momentum.trendChange > 0 ? '+' : ''}{result.momentum.trendChange}% over 90 days
+                  </p>
+                )}
               </div>
 
               {/* Optimization Warning */}
@@ -194,7 +204,7 @@ export default function Home() {
                     <span className="text-3xl">✅</span>
                     <h2 className="text-xl font-bold text-slate-300">Balanced Distribution</h2>
                   </div>
-                  <p className="text-slate-500 text-sm">No single format dominates this niche</p>
+                  <p className="text-slate-500 text-sm">Format distribution matches performance</p>
                 </div>
               )}
             </div>
@@ -257,14 +267,16 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Packaging Analysis + Diversification */}
+            {/* Packaging Analysis + Related Queries */}
             <div className="grid md:grid-cols-2 gap-6">
-              {/* Title Patterns */}
+              {/* Title Patterns + Thumbnail Analysis */}
               <div className="bg-slate-800/50 rounded-2xl p-6 border border-slate-700">
                 <h2 className="text-xl font-bold text-purple-400 mb-4 flex items-center gap-2">
                   <span className="text-2xl">🎨</span> Packaging Patterns
                 </h2>
-                <div className="space-y-3">
+
+                {/* Title patterns */}
+                <div className="space-y-3 mb-4">
                   <div className="flex justify-between items-center">
                     <span className="text-slate-400">Has Numbers</span>
                     <div className="flex items-center gap-2">
@@ -292,17 +304,32 @@ export default function Home() {
                       <span className="text-white text-sm w-10">{result.titlePatterns.allCaps}%</span>
                     </div>
                   </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-slate-400">Has Emoji</span>
-                    <div className="flex items-center gap-2">
-                      <div className="w-24 h-2 bg-slate-700 rounded-full overflow-hidden">
-                        <div className="h-full bg-green-500" style={{ width: `${result.titlePatterns.hasEmoji}%` }} />
-                      </div>
-                      <span className="text-white text-sm w-10">{result.titlePatterns.hasEmoji}%</span>
-                    </div>
-                  </div>
-                  <p className="text-slate-500 text-xs mt-2">Avg title length: {result.titlePatterns.avgTitleLength} chars</p>
                 </div>
+
+                {/* Thumbnail Analysis from Vision API */}
+                {result.thumbnailAnalysis && (
+                  <div className="border-t border-slate-700 pt-4 mt-4">
+                    <p className="text-sm text-blue-400 mb-2">🔬 Vision API Analysis (Top 5)</p>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="bg-slate-700/50 rounded p-2">
+                        <span className="text-slate-400">Faces:</span>
+                        <span className="text-white ml-1">{result.thumbnailAnalysis.faceCount} found</span>
+                      </div>
+                      <div className="bg-slate-700/50 rounded p-2">
+                        <span className="text-slate-400">Text:</span>
+                        <span className="text-white ml-1">{result.thumbnailAnalysis.hasText ? 'Yes' : 'No'}</span>
+                      </div>
+                    </div>
+                    {result.thumbnailAnalysis.detectedLabels.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {result.thumbnailAnalysis.detectedLabels.map((label, i) => (
+                          <span key={i} className="text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded">{label}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <button
                   onClick={() => setShowPrompt(true)}
                   className="mt-4 w-full py-2 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-sm font-semibold transition-all"
@@ -311,22 +338,27 @@ export default function Home() {
                 </button>
               </div>
 
-              {/* Diversification Keywords */}
+              {/* Related Queries (YouTube Autocomplete) */}
               <div className="bg-slate-800/50 rounded-2xl p-6 border border-slate-700">
                 <h2 className="text-xl font-bold text-blue-400 mb-4 flex items-center gap-2">
-                  <span className="text-2xl">🔄</span> Related Niches
+                  <span className="text-2xl">🔄</span> Related Searches
+                  <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded ml-2">YouTube Autocomplete</span>
                 </h2>
                 <p className="text-slate-500 text-sm mb-3">Click to explore adjacent markets</p>
                 <div className="flex flex-wrap gap-2">
-                  {result.diversificationKeywords.map((kw, i) => (
-                    <button
-                      key={i}
-                      onClick={() => handleKeywordClick(kw.word)}
-                      className="px-3 py-1.5 rounded-full bg-blue-500/20 border border-blue-500/30 text-blue-300 text-sm hover:bg-blue-500/30 transition-all"
-                    >
-                      {kw.word} <span className="text-blue-500/60">({kw.count})</span>
-                    </button>
-                  ))}
+                  {result.relatedQueries && result.relatedQueries.length > 0 ? (
+                    result.relatedQueries.map((q, i) => (
+                      <button
+                        key={i}
+                        onClick={() => handleAnalyze(q)}
+                        className="px-3 py-1.5 rounded-full bg-blue-500/20 border border-blue-500/30 text-blue-300 text-sm hover:bg-blue-500/30 transition-all"
+                      >
+                        {q}
+                      </button>
+                    ))
+                  ) : (
+                    <p className="text-slate-500 text-sm">No related queries found</p>
+                  )}
                 </div>
               </div>
             </div>
@@ -374,6 +406,9 @@ export default function Home() {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-xl font-bold text-purple-400 flex items-center gap-2">
                   <span>🍌</span> Nano Banana Prompt
+                  {result.thumbnailAnalysis && (
+                    <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded ml-2">Vision-Enhanced</span>
+                  )}
                 </h3>
                 <button onClick={() => setShowPrompt(false)} className="text-slate-400 hover:text-white">✕</button>
               </div>

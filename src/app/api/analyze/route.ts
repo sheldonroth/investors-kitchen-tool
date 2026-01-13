@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
+import googleTrends from 'google-trends-api';
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
+const VISION_API_KEY = process.env.GOOGLE_CLOUD_VISION_API_KEY;
 const BASE_URL = 'https://www.googleapis.com/youtube/v3';
 
 function parseDuration(isoDuration: string): number {
@@ -44,6 +46,147 @@ interface DurationBucket {
     videos: VideoData[];
 }
 
+interface ThumbnailAnalysis {
+    hasFaces: boolean;
+    faceCount: number;
+    dominantColors: string[];
+    hasText: boolean;
+    detectedLabels: string[];
+}
+
+// ===== IMPROVEMENT 1: YouTube Autocomplete API =====
+async function getYouTubeAutocomplete(query: string): Promise<string[]> {
+    try {
+        const response = await axios.get('https://suggestqueries.google.com/complete/search', {
+            params: {
+                client: 'youtube',
+                ds: 'yt',
+                q: query
+            },
+            responseType: 'text'
+        });
+
+        // Parse JSONP response
+        const text = response.data;
+        const jsonMatch = text.match(/\[[\s\S]*\]/);
+        if (!jsonMatch) return [];
+
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(parsed) && parsed[1]) {
+            return parsed[1].map((item: string[]) => item[0]).slice(0, 8);
+        }
+        return [];
+    } catch {
+        return [];
+    }
+}
+
+// ===== IMPROVEMENT 2: Google Trends Integration =====
+async function getTrendData(query: string): Promise<{ direction: string; change: number; emoji: string } | null> {
+    try {
+        const result = await googleTrends.interestOverTime({
+            keyword: query,
+            startTime: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
+            geo: 'US'
+        });
+
+        const data = JSON.parse(result);
+        const timeline = data.default?.timelineData;
+
+        if (!timeline || timeline.length < 2) return null;
+
+        const recent = timeline.slice(-4).reduce((s: number, t: { value: number[] }) => s + t.value[0], 0) / 4;
+        const older = timeline.slice(0, 4).reduce((s: number, t: { value: number[] }) => s + t.value[0], 0) / 4;
+
+        const change = older > 0 ? Math.round(((recent - older) / older) * 100) : 0;
+
+        let direction: 'rising' | 'stable' | 'declining';
+        let emoji: string;
+
+        if (change > 20) {
+            direction = 'rising';
+            emoji = '📈';
+        } else if (change < -20) {
+            direction = 'declining';
+            emoji = '📉';
+        } else {
+            direction = 'stable';
+            emoji = '➡️';
+        }
+
+        return { direction, change, emoji };
+    } catch {
+        return null;
+    }
+}
+
+// ===== IMPROVEMENT 3: Vision API Thumbnail Analysis =====
+async function analyzeThumbnails(thumbnailUrls: string[]): Promise<ThumbnailAnalysis | null> {
+    if (!VISION_API_KEY || thumbnailUrls.length === 0) return null;
+
+    try {
+        const requests = thumbnailUrls.slice(0, 5).map(url => ({
+            image: { source: { imageUri: url } },
+            features: [
+                { type: 'FACE_DETECTION', maxResults: 5 },
+                { type: 'IMAGE_PROPERTIES', maxResults: 5 },
+                { type: 'TEXT_DETECTION', maxResults: 5 },
+                { type: 'LABEL_DETECTION', maxResults: 10 }
+            ]
+        }));
+
+        const response = await axios.post(
+            `https://vision.googleapis.com/v1/images:annotate?key=${VISION_API_KEY}`,
+            { requests }
+        );
+
+        const results = response.data.responses;
+
+        // Aggregate results
+        let totalFaces = 0;
+        let hasText = false;
+        const allColors: string[] = [];
+        const allLabels: string[] = [];
+
+        for (const r of results) {
+            if (r.faceAnnotations) {
+                totalFaces += r.faceAnnotations.length;
+            }
+            if (r.textAnnotations && r.textAnnotations.length > 0) {
+                hasText = true;
+            }
+            if (r.imagePropertiesAnnotation?.dominantColors?.colors) {
+                const topColor = r.imagePropertiesAnnotation.dominantColors.colors[0];
+                if (topColor?.color) {
+                    const c = topColor.color;
+                    allColors.push(`rgb(${c.red || 0},${c.green || 0},${c.blue || 0})`);
+                }
+            }
+            if (r.labelAnnotations) {
+                allLabels.push(...r.labelAnnotations.map((l: { description: string }) => l.description));
+            }
+        }
+
+        // Get unique top labels
+        const labelFreq: Record<string, number> = {};
+        allLabels.forEach(l => { labelFreq[l] = (labelFreq[l] || 0) + 1; });
+        const topLabels = Object.entries(labelFreq)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 5)
+            .map(([label]) => label);
+
+        return {
+            hasFaces: totalFaces > 0,
+            faceCount: totalFaces,
+            dominantColors: [...new Set(allColors)].slice(0, 3),
+            hasText,
+            detectedLabels: topLabels
+        };
+    } catch {
+        return null;
+    }
+}
+
 export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const query = searchParams.get('q');
@@ -58,16 +201,20 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        // 1. Search for videos
-        const searchResponse = await axios.get(`${BASE_URL}/search`, {
-            params: {
-                part: 'snippet',
-                q: query,
-                type: 'video',
-                maxResults,
-                key: YOUTUBE_API_KEY
-            }
-        });
+        // Run parallel API calls for better performance
+        const [searchResponse, autocompleteResults, trendsData] = await Promise.all([
+            axios.get(`${BASE_URL}/search`, {
+                params: {
+                    part: 'snippet',
+                    q: query,
+                    type: 'video',
+                    maxResults,
+                    key: YOUTUBE_API_KEY
+                }
+            }),
+            getYouTubeAutocomplete(query),
+            getTrendData(query)
+        ]);
 
         const items = searchResponse.data.items;
         if (!items || items.length === 0) {
@@ -76,7 +223,7 @@ export async function GET(request: NextRequest) {
 
         const videoIds = items.map((item: { id: { videoId: string } }) => item.id.videoId).join(',');
 
-        // 2. Get detailed statistics
+        // Get detailed statistics
         const statsResponse = await axios.get(`${BASE_URL}/videos`, {
             params: {
                 part: 'snippet,contentDetails,statistics',
@@ -106,7 +253,14 @@ export async function GET(request: NextRequest) {
             };
         });
 
-        // 3. Analyze for "Holes" (market gaps) and "Lengths"
+        // Sort by views for top performer analysis
+        const sortedByViews = [...videos].sort((a, b) => b.views - a.views);
+        const topThumbnails = sortedByViews.slice(0, 5).map(v => v.thumbnail);
+
+        // Analyze thumbnails (runs async, may be null if no Vision API key)
+        const thumbnailAnalysis = await analyzeThumbnails(topThumbnails);
+
+        // Duration bucket analysis
         const durationBuckets: Record<string, DurationBucket> = {};
         const categories = ['Short (<1 min)', 'Short (1-5 min)', 'Medium (5-10 min)', 'Long (10-20 min)', 'Very Long (>20 min)'];
 
@@ -131,7 +285,6 @@ export async function GET(request: NextRequest) {
             const bucket = durationBuckets[cat];
             bucket.avgViews = bucket.count > 0 ? Math.round(bucket.totalViews / bucket.count) : 0;
 
-            // Calculate scores
             const competitionScore = bucket.count > 0 ? 1 - (bucket.count / videos.length) : 1;
             const demandScore = overallAvgViews > 0 ? bucket.avgViews / overallAvgViews : 0;
             const opportunityScore = competitionScore * demandScore;
@@ -144,15 +297,14 @@ export async function GET(request: NextRequest) {
             };
         });
 
-        // Find TRUE holes using stricter criteria
+        // Find market holes
         const holes = analysis
             .filter(a => {
-                const isLowCompetition = a.count < avgCountPerCategory * 0.8; // 20%+ below average
-                const isHighDemand = a.avgViews >= overallAvgViews; // At or above average views
+                const isLowCompetition = a.count < avgCountPerCategory * 0.8;
+                const isHighDemand = a.avgViews >= overallAvgViews;
                 return isLowCompetition && isHighDemand && a.count > 0;
             })
             .map(a => {
-                // Classify hole type
                 const isVeryLowComp = a.count < avgCountPerCategory * 0.5;
                 const isVeryHighDemand = a.avgViews > overallAvgViews * 1.5;
 
@@ -174,64 +326,49 @@ export async function GET(request: NextRequest) {
             })
             .sort((a, b) => b.opportunityScore - a.opportunityScore);
 
-        // ===== FEATURE 3: Naïve Optimization Warning =====
+        // ===== IMPROVED: Optimization Warning =====
         const maxCount = Math.max(...analysis.map(a => a.count));
         const concentrationPct = (maxCount / videos.length) * 100;
-        const dominantCategory = analysis.find(a => a.count === maxCount)?.range || '';
-        const lowCompCategory = analysis.filter(a => a.count > 0).sort((a, b) => a.count - b.count)[0]?.range;
+        const dominantCategory = analysis.find(a => a.count === maxCount);
+        const dominantCategoryName = dominantCategory?.range || '';
+        const dominantHasHighestAvgViews = dominantCategory?.avgViews === Math.max(...analysis.map(a => a.avgViews));
 
-        const optimizationWarning = concentrationPct > 50 ? {
+        // Only warn if dominant category doesn't have highest avg views (true over-optimization)
+        const optimizationWarning = (concentrationPct > 50 && !dominantHasHighestAvgViews) ? {
             warning: true,
             concentrationPct: Math.round(concentrationPct),
-            dominantCategory,
-            message: `${Math.round(concentrationPct)}% of videos are ${dominantCategory}`,
-            suggestion: lowCompCategory ? `Consider ${lowCompCategory} for contrarian positioning` : null
+            dominantCategory: dominantCategoryName,
+            message: `${Math.round(concentrationPct)}% of videos are ${dominantCategoryName}, but it's NOT the best performer`,
+            suggestion: `The highest avg views come from a different length — consider diversifying`
         } : null;
 
-        // ===== FEATURE 6: Diversification Suggestions =====
-        const stopWords = new Set(['the', 'and', 'for', 'how', 'what', 'this', 'that', 'with', 'you', 'your', 'from', 'are', 'was', 'will', 'can', 'all', 'has', 'have', 'been', 'were', 'they', 'their', 'which', 'would', 'there', 'could', 'about', 'into', 'just', 'than', 'then', 'them', 'these', 'when', 'where', 'while', 'best', 'most', 'more', 'make', 'like', 'get', 'new', 'top', 'video', 'videos']);
-        const titleWords = videos.flatMap(v =>
-            v.title.toLowerCase()
-                .replace(/[^\w\s]/g, '')
-                .split(/\s+/)
-                .filter(w => w.length > 3 && !stopWords.has(w))
-        );
-        const wordFreq: Record<string, number> = {};
-        titleWords.forEach(w => { wordFreq[w] = (wordFreq[w] || 0) + 1; });
-        const diversificationKeywords = Object.entries(wordFreq)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 8)
-            .map(([word, count]) => ({ word, count }));
-
-        // ===== FEATURE 4: Momentum Tracker =====
+        // ===== IMPROVED: Momentum with Google Trends =====
         const now = new Date();
         const daysSince = (dateStr: string) => Math.floor((now.getTime() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24));
         const avgUploadAge = Math.round(videos.reduce((sum, v) => sum + daysSince(v.publishedAt), 0) / videos.length);
         const recentVideos = videos.filter(v => daysSince(v.publishedAt) < 30);
         const recentPct = Math.round((recentVideos.length / videos.length) * 100);
 
-        let momentumStatus: 'rising' | 'stable' | 'declining';
-        let momentumEmoji: string;
-        if (recentPct > 30) {
-            momentumStatus = 'rising';
-            momentumEmoji = '📈';
-        } else if (avgUploadAge < 180) {
-            momentumStatus = 'stable';
-            momentumEmoji = '➡️';
-        } else {
-            momentumStatus = 'declining';
-            momentumEmoji = '📉';
-        }
-
-        const momentum = {
-            status: momentumStatus,
-            emoji: momentumEmoji,
+        // Use Google Trends if available, fallback to upload recency
+        const momentum = trendsData ? {
+            status: trendsData.direction,
+            emoji: trendsData.emoji,
+            trendChange: trendsData.change,
             avgUploadAgeDays: avgUploadAge,
             recentPct,
-            message: `${recentPct}% of top results uploaded in last 30 days`
+            message: `${trendsData.change > 0 ? '+' : ''}${trendsData.change}% search interest over 90 days`,
+            source: 'google_trends'
+        } : {
+            status: recentPct > 30 ? 'rising' : avgUploadAge < 180 ? 'stable' : 'declining',
+            emoji: recentPct > 30 ? '📈' : avgUploadAge < 180 ? '➡️' : '📉',
+            trendChange: null,
+            avgUploadAgeDays: avgUploadAge,
+            recentPct,
+            message: `${recentPct}% of top results uploaded in last 30 days`,
+            source: 'upload_recency'
         };
 
-        // ===== FEATURE 2: Packaging Analyzer =====
+        // Title patterns
         const titlePatterns = {
             hasNumber: Math.round((videos.filter(v => /\d/.test(v.title)).length / videos.length) * 100),
             hasQuestion: Math.round((videos.filter(v => /\?/.test(v.title)).length / videos.length) * 100),
@@ -240,16 +377,29 @@ export async function GET(request: NextRequest) {
             avgTitleLength: Math.round(videos.reduce((s, v) => s + v.title.length, 0) / videos.length)
         };
 
-        // Generate Nano Banana thumbnail prompt
-        const isShortForm = dominantCategory.includes('Short');
-        const thumbnailPrompt = `Create a YouTube thumbnail for "${query}":
-- Style: ${isShortForm ? 'Bold, minimal, punchy text overlay' : 'Detailed, curiosity-driven visual story'}
-- Colors: High contrast, ${overallAvgViews > 100000 ? 'vibrant saturated colors' : 'clean modern pastels'}
-- Composition: ${titlePatterns.hasNumber > 50 ? 'Large number as focal point (e.g., "TOP 5")' : 'Single clear subject, rule of thirds'}
-- Text: ${titlePatterns.allCaps > 30 ? 'ALL CAPS hook, max 3 words' : 'Title case, short punchy phrase'}
-- Person: ${query.toLowerCase().includes('tutorial') || query.toLowerCase().includes('how') ? 'Optional face with pointing gesture toward text' : 'Expressive reaction face, eyes wide open'}
-- Background: Soft gradient or blurred, subject pops forward
-- Mood: ${momentumStatus === 'rising' ? 'Exciting, energetic, trending vibe' : 'Trustworthy, authoritative, evergreen feel'}`;
+        // ===== IMPROVED: Thumbnail Prompt based on Vision Analysis =====
+        const isShortForm = dominantCategoryName.includes('Short');
+        let thumbnailPrompt = `Create a YouTube thumbnail for "${query}":\n`;
+
+        if (thumbnailAnalysis) {
+            // Use actual Vision API insights
+            thumbnailPrompt += `\nBased on analysis of top-performing thumbnails:\n`;
+            thumbnailPrompt += `- Faces: ${thumbnailAnalysis.hasFaces ? `YES (avg ${Math.round(thumbnailAnalysis.faceCount / 5)} per thumbnail)` : 'Few/none used'}\n`;
+            thumbnailPrompt += `- Text overlays: ${thumbnailAnalysis.hasText ? 'Common in top performers' : 'Minimal text preferred'}\n`;
+            thumbnailPrompt += `- Common themes: ${thumbnailAnalysis.detectedLabels.join(', ')}\n`;
+            thumbnailPrompt += `- Color palette: ${thumbnailAnalysis.dominantColors.join(', ')}\n`;
+            thumbnailPrompt += `\nSuggested approach:\n`;
+            thumbnailPrompt += `- ${thumbnailAnalysis.hasFaces ? 'Include an expressive face' : 'Focus on subject matter, no face needed'}\n`;
+            thumbnailPrompt += `- ${thumbnailAnalysis.hasText ? 'Add bold text hook (2-4 words)' : 'Let visuals speak, minimal text'}\n`;
+            thumbnailPrompt += `- Style: ${isShortForm ? 'Bold, vertical-friendly, punchy' : 'Detailed, curiosity-driven'}\n`;
+        } else {
+            // Fallback to pattern-based generation
+            thumbnailPrompt += `- Style: ${isShortForm ? 'Bold, minimal, punchy text overlay' : 'Detailed, curiosity-driven visual story'}\n`;
+            thumbnailPrompt += `- Colors: High contrast, ${overallAvgViews > 100000 ? 'vibrant saturated colors' : 'clean modern pastels'}\n`;
+            thumbnailPrompt += `- Composition: ${titlePatterns.hasNumber > 50 ? 'Large number as focal point' : 'Single clear subject, rule of thirds'}\n`;
+            thumbnailPrompt += `- Text: ${titlePatterns.allCaps > 30 ? 'ALL CAPS hook, max 3 words' : 'Title case, short phrase'}\n`;
+            thumbnailPrompt += `- Face: ${query.toLowerCase().includes('tutorial') ? 'Optional pointing gesture' : 'Expressive reaction'}\n`;
+        }
 
         return NextResponse.json({
             query,
@@ -259,16 +409,17 @@ export async function GET(request: NextRequest) {
             lengthAnalysis: analysis,
             marketHoles: holes,
             optimizationWarning,
-            diversificationKeywords,
+            relatedQueries: autocompleteResults,
             momentum,
             titlePatterns,
+            thumbnailAnalysis,
             thumbnailPrompt
         });
 
     } catch (error) {
         if (axios.isAxiosError(error) && error.response) {
             return NextResponse.json({
-                error: `YouTube API Error: ${error.response.status} - ${JSON.stringify(error.response.data)}`
+                error: `API Error: ${error.response.status} - ${JSON.stringify(error.response.data)}`
             }, { status: error.response.status });
         }
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
