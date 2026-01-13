@@ -115,13 +115,13 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        // 1. Get top-performing videos in niche (INCREASED sample)
+        // 1. Get top-performing videos in niche
         const searchResponse = await axios.get(`${BASE_URL}/search`, {
             params: {
                 part: 'snippet',
                 q: niche,
                 type: 'video',
-                maxResults: 30, // Increased from 20
+                maxResults: 40,
                 order: 'viewCount',
                 key: YOUTUBE_API_KEY
             }
@@ -134,144 +134,158 @@ export async function GET(request: NextRequest) {
 
         const videoIds = items.map((item: { id: { videoId: string } }) => item.id.videoId);
 
-        // 2. Get video stats
+        // 2. Get video stats AND contentDetails for duration
         const statsResponse = await axios.get(`${BASE_URL}/videos`, {
             params: {
-                part: 'snippet,statistics',
+                part: 'snippet,statistics,contentDetails',
                 id: videoIds.join(','),
                 key: YOUTUBE_API_KEY
             }
         });
 
-        // 3. Analyze top 15 thumbnails (increased from 8)
-        const videosToAnalyze = statsResponse.data.items.slice(0, 15);
-        const analyses: ThumbnailAnalysis[] = [];
-
-        for (const video of videosToAnalyze) {
-            const thumbnailUrlHigh = video.snippet.thumbnails.high?.url || video.snippet.thumbnails.default?.url;
-
-            const analysis = await analyzeThumbnail(thumbnailUrlHigh, video.snippet.title);
-
-            analyses.push({
-                videoId: video.id,
-                title: video.snippet.title,
-                views: parseInt(video.statistics.viewCount || '0', 10),
-                thumbnailUrl: thumbnailUrlHigh,
-                analysis
-            });
-
-            await new Promise(resolve => setTimeout(resolve, 200));
-        }
-
-        // 4. Identify CONVENTIONS (not "what works")
-        const conventions: NicheConvention[] = [];
-        const totalAnalyzed = analyses.length;
-
-        // Calculate confidence based on sample size
-        const getConfidence = (count: number): 'low' | 'medium' | 'high' => {
-            if (totalAnalyzed >= 12) return count >= 8 ? 'high' : count >= 5 ? 'medium' : 'low';
-            if (totalAnalyzed >= 8) return count >= 5 ? 'medium' : 'low';
-            return 'low';
+        // 3. Parse duration and separate Shorts from Long-form
+        const parseDuration = (isoDuration: string): number => {
+            const match = isoDuration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+            if (!match) return 0;
+            const hours = parseInt(match[1] || '0', 10);
+            const minutes = parseInt(match[2] || '0', 10);
+            const seconds = parseInt(match[3] || '0', 10);
+            return hours * 3600 + minutes * 60 + seconds;
         };
 
-        // Face presence
-        const faceCount = analyses.filter(a => a.analysis.hasFace).length;
-        const facePrevalence = Math.round((faceCount / totalAnalyzed) * 100);
-        conventions.push({
-            convention: 'Face in thumbnail',
-            prevalence: facePrevalence,
-            sampleSize: totalAnalyzed,
-            confidence: getConfidence(faceCount),
-            observation: facePrevalence >= 70
-                ? `${facePrevalence}% of top videos include faces. This appears to be a niche norm.`
-                : facePrevalence >= 40
-                    ? `${facePrevalence}% include faces. Mixed convention in this niche.`
-                    : `Only ${facePrevalence}% include faces. Non-face thumbnails are common here.`
-        });
+        const allVideos = statsResponse.data.items.map((v: {
+            id: string;
+            snippet: { title: string; thumbnails: { high?: { url: string }; default?: { url: string } } };
+            statistics: { viewCount?: string };
+            contentDetails: { duration: string };
+        }) => ({
+            id: v.id,
+            title: v.snippet.title,
+            views: parseInt(v.statistics.viewCount || '0', 10),
+            thumbnailUrl: v.snippet.thumbnails.high?.url || v.snippet.thumbnails.default?.url,
+            duration: parseDuration(v.contentDetails.duration),
+            isShort: parseDuration(v.contentDetails.duration) <= 60
+        }));
 
-        // Text presence
-        const textCount = analyses.filter(a => a.analysis.hasText).length;
-        const textPrevalence = Math.round((textCount / totalAnalyzed) * 100);
-        conventions.push({
-            convention: 'Text overlay',
-            prevalence: textPrevalence,
-            sampleSize: totalAnalyzed,
-            confidence: getConfidence(textCount),
-            observation: textPrevalence >= 70
-                ? `${textPrevalence}% use text overlays. Standard practice in this niche.`
-                : textPrevalence >= 40
-                    ? `${textPrevalence}% use text. Optional in this niche.`
-                    : `Only ${textPrevalence}% use text. Visual-first thumbnails common here.`
-        });
+        const shorts = allVideos.filter((v: { isShort: boolean }) => v.isShort);
+        const longForm = allVideos.filter((v: { isShort: boolean }) => !v.isShort);
 
-        // High contrast
-        const highContrastCount = analyses.filter(a => a.analysis.contrast === 'high').length;
-        const contrastPrevalence = Math.round((highContrastCount / totalAnalyzed) * 100);
-        conventions.push({
-            convention: 'High contrast',
-            prevalence: contrastPrevalence,
-            sampleSize: totalAnalyzed,
-            confidence: getConfidence(highContrastCount),
-            observation: `${contrastPrevalence}% use high contrast. ${contrastPrevalence >= 50 ? 'Common' : 'Less common'} in this niche.`
-        });
+        // 4. Analyze thumbnails for each format (max 8 each)
+        const analyzeFormat = async (videos: typeof allVideos, formatName: string) => {
+            const toAnalyze = videos.slice(0, 8);
+            const analyses: ThumbnailAnalysis[] = [];
 
-        // Emotions (if faces present)
-        if (faceCount >= 3) {
-            const emotionCounts: Record<string, number> = {};
-            analyses.forEach(a => {
-                if (a.analysis.emotionIfFace && a.analysis.emotionIfFace !== 'n/a') {
-                    emotionCounts[a.analysis.emotionIfFace] = (emotionCounts[a.analysis.emotionIfFace] || 0) + 1;
-                }
-            });
-            const topEmotion = Object.entries(emotionCounts).sort((a, b) => b[1] - a[1])[0];
-            if (topEmotion && topEmotion[1] >= 2) {
-                const emotionPrevalence = Math.round((topEmotion[1] / faceCount) * 100);
-                conventions.push({
-                    convention: `${topEmotion[0].charAt(0).toUpperCase() + topEmotion[0].slice(1)} expression`,
-                    prevalence: emotionPrevalence,
-                    sampleSize: faceCount,
-                    confidence: faceCount >= 5 ? 'medium' : 'low',
-                    observation: `Of thumbnails with faces, ${emotionPrevalence}% show ${topEmotion[0]} expressions.`
+            for (const video of toAnalyze) {
+                const analysis = await analyzeThumbnail(video.thumbnailUrl, video.title);
+                analyses.push({
+                    videoId: video.id,
+                    title: video.title,
+                    views: video.views,
+                    thumbnailUrl: video.thumbnailUrl,
+                    analysis
                 });
+                await new Promise(resolve => setTimeout(resolve, 200));
             }
-        }
+
+            // Calculate conventions
+            const conventions: NicheConvention[] = [];
+            const total = analyses.length;
+
+            if (total < 3) {
+                return {
+                    format: formatName,
+                    videosAnalyzed: total,
+                    conventions: [],
+                    topPerformers: [],
+                    note: `Only ${total} ${formatName} videos found. Need at least 3 for pattern analysis.`
+                };
+            }
+
+            const getConfidence = (count: number): 'low' | 'medium' | 'high' => {
+                if (total >= 6) return count >= 5 ? 'high' : count >= 3 ? 'medium' : 'low';
+                return count >= 3 ? 'medium' : 'low';
+            };
+
+            // Face presence
+            const faceCount = analyses.filter(a => a.analysis.hasFace).length;
+            conventions.push({
+                convention: 'Face in thumbnail',
+                prevalence: Math.round((faceCount / total) * 100),
+                sampleSize: total,
+                confidence: getConfidence(faceCount),
+                observation: faceCount >= total * 0.7
+                    ? `Faces are standard for ${formatName} in this niche.`
+                    : faceCount >= total * 0.4
+                        ? `Mixed usage of faces in ${formatName}.`
+                        : `Faces are uncommon in ${formatName} for this niche.`
+            });
+
+            // Text presence
+            const textCount = analyses.filter(a => a.analysis.hasText).length;
+            conventions.push({
+                convention: 'Text overlay',
+                prevalence: Math.round((textCount / total) * 100),
+                sampleSize: total,
+                confidence: getConfidence(textCount),
+                observation: textCount >= total * 0.7
+                    ? `Text overlays are standard for ${formatName}.`
+                    : `Text is ${textCount >= total * 0.4 ? 'mixed' : 'uncommon'} for ${formatName}.`
+            });
+
+            // Contrast
+            const highContrastCount = analyses.filter(a => a.analysis.contrast === 'high').length;
+            conventions.push({
+                convention: 'High contrast',
+                prevalence: Math.round((highContrastCount / total) * 100),
+                sampleSize: total,
+                confidence: getConfidence(highContrastCount),
+                observation: `${highContrastCount >= total * 0.5 ? 'Common' : 'Less common'} in ${formatName}.`
+            });
+
+            return {
+                format: formatName,
+                videosAnalyzed: total,
+                conventions,
+                topPerformers: analyses.slice(0, 4).map(a => ({
+                    title: a.title,
+                    views: a.views,
+                    thumbnailUrl: a.thumbnailUrl,
+                    features: [
+                        a.analysis.hasFace ? 'Face' : null,
+                        a.analysis.hasText ? 'Text' : null,
+                        a.analysis.contrast === 'high' ? 'High contrast' : null
+                    ].filter(Boolean)
+                }))
+            };
+        };
+
+        const shortsAnalysis = await analyzeFormat(shorts, 'Shorts');
+        const longFormAnalysis = await analyzeFormat(longForm, 'Long-form');
 
         return NextResponse.json({
             niche,
-            thumbnailsAnalyzed: analyses.length,
+            videoTypesFound: {
+                shorts: shorts.length,
+                longForm: longForm.length
+            },
 
-            // REFRAMED: "Niche Conventions" not "What Works"
-            conventions,
-
-            topPerformers: analyses.slice(0, 6).map(a => ({
-                title: a.title,
-                views: a.views,
-                thumbnailUrl: a.thumbnailUrl,
-                features: [
-                    a.analysis.hasFace ? 'Has face' : 'No face',
-                    a.analysis.hasText ? `Text: ${a.analysis.textAmount}` : 'No text',
-                    `${a.analysis.contrast} contrast`,
-                    a.analysis.emotionIfFace !== 'n/a' ? a.analysis.emotionIfFace : null
-                ].filter(Boolean)
-            })),
+            // Separate analysis by format
+            shorts: shortsAnalysis,
+            longForm: longFormAnalysis,
 
             // HONEST methodology
             methodology: {
-                approach: 'Analyzes thumbnails from top-performing videos to identify common patterns',
-                sampleSize: analyses.length,
+                approach: 'Analyzes thumbnails separately for Shorts (≤60s) and Long-form videos',
                 limitations: [
                     'We observe CORRELATION, not CAUSATION',
-                    'High views may be due to topic, title, algorithm, or existing audience - not just thumbnail',
-                    'We do not have CTR data - cannot prove thumbnails drove clicks',
-                    'Copying conventions does not guarantee results'
+                    'High views may be due to topic, title, algorithm - not thumbnail',
+                    'No CTR data available - cannot prove thumbnails drove clicks',
+                    'Shorts and Long-form have different discovery mechanics'
                 ],
-                interpretation: 'These are patterns OBSERVED in successful videos, not PROVEN to cause success'
+                interpretation: 'Patterns OBSERVED in successful videos, not PROVEN to cause success'
             },
 
-            insight: `Analyzed ${analyses.length} top-performing thumbnails. ${conventions.filter(c => c.confidence === 'high').length > 0
-                    ? `High-confidence conventions: ${conventions.filter(c => c.confidence === 'high').map(c => c.convention.toLowerCase()).join(', ')}.`
-                    : 'No high-confidence conventions detected. This niche may have varied visual styles.'
-                }`
+            insight: `Found ${shorts.length} Shorts and ${longForm.length} Long-form videos. Analyzed conventions separately since thumbnail strategies differ by format.`
         });
 
     } catch (error) {

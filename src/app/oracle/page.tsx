@@ -21,6 +21,8 @@ interface ToolInfo {
     name: string;
     icon: React.ReactNode;
     description: string;
+    whatItDoes: string;
+    whenToUse: string;
     inputLabel: string;
     inputPlaceholder: string;
 }
@@ -31,6 +33,8 @@ const TOOLS: ToolInfo[] = [
         name: 'Pattern Analysis',
         icon: <AlertTriangle className="w-5 h-5" strokeWidth={1.5} />,
         description: 'Title patterns correlated with underperformance',
+        whatItDoes: 'Analyzes videos that underperformed relative to channel size. Identifies common title patterns (words, length, format) that appear more often in failed videos.',
+        whenToUse: 'Before finalizing your title. Helps you avoid patterns that are statistically associated with low view ratios in your niche.',
         inputLabel: 'Niche',
         inputPlaceholder: 'e.g., cooking tutorials'
     },
@@ -39,6 +43,8 @@ const TOOLS: ToolInfo[] = [
         name: 'Momentum',
         icon: <Flame className="w-5 h-5" strokeWidth={1.5} />,
         description: 'Recent trend signals (3-7 day lag)',
+        whatItDoes: 'Checks Google Trends for rising topics in your area. Shows which subtopics are gaining search interest and how many videos were published recently.',
+        whenToUse: 'When looking for trending topics to cover. Note: Trend data has a 3-7 day lag, so hot topics may already have competition.',
         inputLabel: 'Topic',
         inputPlaceholder: 'e.g., personal finance'
     },
@@ -47,6 +53,8 @@ const TOOLS: ToolInfo[] = [
         name: 'Low Competition',
         icon: <Waves className="w-5 h-5" strokeWidth={1.5} />,
         description: 'Format × topic experiments',
+        whatItDoes: 'Generates combinations of formats (tutorial, vlog, comparison, etc.) with your topic. Checks how many videos exist for each combination and estimates risk level.',
+        whenToUse: 'When brainstorming video formats. Low competition might mean opportunity OR no demand—use with caution.',
         inputLabel: 'Topic',
         inputPlaceholder: 'e.g., home repair'
     },
@@ -55,6 +63,8 @@ const TOOLS: ToolInfo[] = [
         name: 'Competitor Gaps',
         icon: <Target className="w-5 h-5" strokeWidth={1.5} />,
         description: 'Content gaps in competitor channels',
+        whatItDoes: 'Analyzes a top channel in your niche. Identifies topics they haven\'t covered recently that have search demand.',
+        whenToUse: 'When studying what successful channels are missing. Good for finding differentiation opportunities.',
         inputLabel: 'Niche',
         inputPlaceholder: 'e.g., fitness'
     },
@@ -62,7 +72,9 @@ const TOOLS: ToolInfo[] = [
         id: 'thumbnails',
         name: 'Thumbnail Conventions',
         icon: <Image className="w-5 h-5" strokeWidth={1.5} />,
-        description: 'Observed patterns (not causation)',
+        description: 'Visual patterns by video type',
+        whatItDoes: 'Analyzes thumbnails from top performers in your niche. Identifies common patterns (faces, text, colors, composition) separately for Shorts (< 60s) and Long-form videos.',
+        whenToUse: 'Before designing your thumbnail. Shows what\'s common in your niche—not what "works" (we can\'t measure CTR).',
         inputLabel: 'Niche',
         inputPlaceholder: 'e.g., tech reviews'
     }
@@ -152,6 +164,14 @@ export default function OraclePage() {
                             <p className="text-xs text-neutral-600 mt-1">{tool.description}</p>
                         </button>
                     ))}
+                </div>
+
+                {/* Tool Explanation */}
+                <div className="max-w-2xl mx-auto mb-8 p-5 bg-neutral-900 rounded-xl border border-neutral-800">
+                    <p className="text-sm text-neutral-500 uppercase tracking-wide mb-2">What it does</p>
+                    <p className="text-neutral-300 mb-4">{currentTool.whatItDoes}</p>
+                    <p className="text-sm text-neutral-500 uppercase tracking-wide mb-2">When to use</p>
+                    <p className="text-neutral-400 text-sm">{currentTool.whenToUse}</p>
                 </div>
 
                 {/* Search */}
@@ -298,43 +318,102 @@ export default function OraclePage() {
                             </div>
                         )}
 
-                        {/* Thumbnail Results */}
-                        {selectedTool === 'thumbnails' && 'conventions' in result && (
-                            <div className="space-y-6">
-                                <div>
-                                    <p className="text-sm text-neutral-500 uppercase tracking-wide mb-4">Observed conventions (correlation only)</p>
-                                    <div className="grid md:grid-cols-2 gap-4">
-                                        {(result.conventions as Array<{ convention: string; prevalence: number; confidence: string; sampleSize: number; observation: string }>).map((conv, i) => (
-                                            <div key={i} className="bg-neutral-900 rounded-xl p-5 border border-neutral-800">
-                                                <div className="flex items-start justify-between mb-2">
-                                                    <span className="text-white font-medium">{conv.convention}</span>
-                                                    <div className="text-right">
-                                                        <span className="text-sm text-neutral-300">{conv.prevalence}%</span>
-                                                        <p className="text-xs text-neutral-600">{conv.confidence} confidence</p>
-                                                    </div>
-                                                </div>
-                                                <p className="text-sm text-neutral-400">{conv.observation}</p>
-                                                <p className="text-xs text-neutral-600 mt-2">Based on {conv.sampleSize} thumbnails</p>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                {'topPerformers' in result && (
-                                    <div>
-                                        <p className="text-sm text-neutral-500 uppercase tracking-wide mb-4">Reference thumbnails</p>
-                                        <div className="grid grid-cols-6 gap-3">
-                                            {(result.topPerformers as Array<{ thumbnailUrl: string; title: string; views: number }>).map((video, i) => (
-                                                <div key={i} className="group">
-                                                    <div className="aspect-video rounded-lg overflow-hidden bg-neutral-800 mb-2">
-                                                        <img src={video.thumbnailUrl} alt={video.title} className="w-full h-full object-cover" />
-                                                    </div>
-                                                    <p className="text-xs text-neutral-500">{formatNumber(video.views)} views</p>
-                                                </div>
-                                            ))}
+                        {/* Thumbnail Results - Now separated by format */}
+                        {selectedTool === 'thumbnails' && 'shorts' in result && (
+                            <div className="space-y-8">
+                                {/* Video Types Found */}
+                                {'videoTypesFound' in result && (
+                                    <div className="flex gap-6 justify-center text-center">
+                                        <div>
+                                            <p className="text-2xl font-light text-white">
+                                                {(result.videoTypesFound as { shorts: number }).shorts}
+                                            </p>
+                                            <p className="text-xs text-neutral-500">Shorts found</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-2xl font-light text-white">
+                                                {(result.videoTypesFound as { longForm: number }).longForm}
+                                            </p>
+                                            <p className="text-xs text-neutral-500">Long-form found</p>
                                         </div>
                                     </div>
                                 )}
+
+                                {/* Shorts Conventions */}
+                                {(() => {
+                                    const shortsData = result.shorts as { format: string; videosAnalyzed: number; conventions: Array<{ convention: string; prevalence: number; confidence: string; observation: string }>; topPerformers: Array<{ title: string; views: number; thumbnailUrl: string }>; note?: string };
+                                    return (
+                                        <div className="bg-violet-950/20 rounded-xl p-6 border border-violet-800/30">
+                                            <p className="text-violet-400 text-sm uppercase tracking-wide mb-4">
+                                                Shorts conventions ({shortsData.videosAnalyzed} analyzed)
+                                            </p>
+                                            {shortsData.note ? (
+                                                <p className="text-neutral-400 text-sm">{shortsData.note}</p>
+                                            ) : (
+                                                <>
+                                                    <div className="grid md:grid-cols-3 gap-3 mb-4">
+                                                        {shortsData.conventions.map((conv, i) => (
+                                                            <div key={i} className="bg-neutral-900/50 rounded-lg p-4">
+                                                                <div className="flex items-center justify-between mb-1">
+                                                                    <span className="text-white text-sm">{conv.convention}</span>
+                                                                    <span className="text-violet-400 text-sm">{conv.prevalence}%</span>
+                                                                </div>
+                                                                <p className="text-xs text-neutral-500">{conv.observation}</p>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                    {shortsData.topPerformers.length > 0 && (
+                                                        <div className="grid grid-cols-4 gap-2">
+                                                            {shortsData.topPerformers.map((v, i) => (
+                                                                <div key={i} className="aspect-video rounded overflow-hidden bg-neutral-800">
+                                                                    <img src={v.thumbnailUrl} alt={v.title} className="w-full h-full object-cover" />
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
+
+                                {/* Long-form Conventions */}
+                                {(() => {
+                                    const longFormData = result.longForm as { format: string; videosAnalyzed: number; conventions: Array<{ convention: string; prevalence: number; confidence: string; observation: string }>; topPerformers: Array<{ title: string; views: number; thumbnailUrl: string }>; note?: string };
+                                    return (
+                                        <div className="bg-emerald-950/20 rounded-xl p-6 border border-emerald-800/30">
+                                            <p className="text-emerald-400 text-sm uppercase tracking-wide mb-4">
+                                                Long-form conventions ({longFormData.videosAnalyzed} analyzed)
+                                            </p>
+                                            {longFormData.note ? (
+                                                <p className="text-neutral-400 text-sm">{longFormData.note}</p>
+                                            ) : (
+                                                <>
+                                                    <div className="grid md:grid-cols-3 gap-3 mb-4">
+                                                        {longFormData.conventions.map((conv, i) => (
+                                                            <div key={i} className="bg-neutral-900/50 rounded-lg p-4">
+                                                                <div className="flex items-center justify-between mb-1">
+                                                                    <span className="text-white text-sm">{conv.convention}</span>
+                                                                    <span className="text-emerald-400 text-sm">{conv.prevalence}%</span>
+                                                                </div>
+                                                                <p className="text-xs text-neutral-500">{conv.observation}</p>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                    {longFormData.topPerformers.length > 0 && (
+                                                        <div className="grid grid-cols-4 gap-2">
+                                                            {longFormData.topPerformers.map((v, i) => (
+                                                                <div key={i} className="aspect-video rounded overflow-hidden bg-neutral-800">
+                                                                    <img src={v.thumbnailUrl} alt={v.title} className="w-full h-full object-cover" />
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         )}
                     </div>
