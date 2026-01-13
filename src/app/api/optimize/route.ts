@@ -23,14 +23,42 @@ function categorizeDuration(seconds: number): string {
     return 'Very Long (>20 min)';
 }
 
+// Statistical helper functions
+function calculateMean(values: number[]): number {
+    return values.reduce((sum, v) => sum + v, 0) / values.length;
+}
+
+function calculateStdDev(values: number[], mean: number): number {
+    const squaredDiffs = values.map(v => Math.pow(v - mean, 2));
+    return Math.sqrt(squaredDiffs.reduce((sum, v) => sum + v, 0) / values.length);
+}
+
+function calculateZScore(value: number, mean: number, stdDev: number): number {
+    if (stdDev === 0) return 0;
+    return (value - mean) / stdDev;
+}
+
+function daysSinceUpload(publishedAt: string): number {
+    const uploadDate = new Date(publishedAt);
+    const now = new Date();
+    const diffMs = now.getTime() - uploadDate.getTime();
+    return Math.max(1, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+}
+
 interface VideoData {
     id: string;
     title: string;
+    channelId: string;
     channelTitle: string;
+    publishedAt: string;
     views: number;
     thumbnail: string;
     durationSec: number;
     lengthCategory: string;
+    // Statistical scores (added after processing)
+    velocity?: number;      // views per day
+    zScore?: number;        // statistical outlier score
+    isStatOutlier?: boolean; // z-score > 2
 }
 
 export async function GET(request: NextRequest) {
@@ -75,31 +103,53 @@ export async function GET(request: NextRequest) {
             }
         });
 
-        const videos: VideoData[] = statsResponse.data.items.map((item: {
+        // Parse videos with statistical data
+        const rawVideos: VideoData[] = statsResponse.data.items.map((item: {
             id: string;
-            snippet: { title: string; channelTitle: string; thumbnails: { high?: { url: string } } };
+            snippet: { title: string; channelId: string; channelTitle: string; publishedAt: string; thumbnails: { high?: { url: string } } };
             contentDetails: { duration: string };
             statistics: { viewCount?: string };
         }) => {
             const durationSec = parseDuration(item.contentDetails.duration);
+            const views = parseInt(item.statistics.viewCount || '0', 10);
+            const days = daysSinceUpload(item.snippet.publishedAt);
             return {
                 id: item.id,
                 title: item.snippet.title,
+                channelId: item.snippet.channelId,
                 channelTitle: item.snippet.channelTitle,
-                views: parseInt(item.statistics.viewCount || '0', 10),
+                publishedAt: item.snippet.publishedAt,
+                views,
                 thumbnail: item.snippet.thumbnails.high?.url || '',
                 durationSec,
-                lengthCategory: categorizeDuration(durationSec)
+                lengthCategory: categorizeDuration(durationSec),
+                velocity: Math.round(views / days) // views per day
             };
         });
 
-        // Sort by views to get top performers
-        const sortedVideos = [...videos].sort((a, b) => b.views - a.views);
+        // === STATISTICAL OUTLIER DETECTION ===
+        // Calculate z-scores based on velocity (views/day) for fair comparison
+        const velocities = rawVideos.map(v => v.velocity || 0);
+        const velocityMean = calculateMean(velocities);
+        const velocityStdDev = calculateStdDev(velocities, velocityMean);
 
-        // Calculate outliers (2x+ above average) - these are the TRUE winners
+        // Add z-scores and mark statistical outliers (z > 2)
+        const videos: VideoData[] = rawVideos.map(v => {
+            const zScore = calculateZScore(v.velocity || 0, velocityMean, velocityStdDev);
+            return {
+                ...v,
+                zScore: Math.round(zScore * 100) / 100,
+                isStatOutlier: zScore > 2 // True statistical outlier
+            };
+        });
+
+        // Sort by z-score (velocity-normalized) for true outliers
+        const sortedByZScore = [...videos].sort((a, b) => (b.zScore || 0) - (a.zScore || 0));
+        const statisticalOutliers = videos.filter(v => v.isStatOutlier);
+        const topOutliers = sortedByZScore.slice(0, 5);
+
+        // Calculate overall stats
         const overallAvg = videos.reduce((sum, v) => sum + v.views, 0) / videos.length;
-        const outliers = sortedVideos.filter(v => v.views >= overallAvg * 2);
-        const topOutliers = outliers.slice(0, 5);
 
         // Analyze duration buckets
         const categories = ['Shorts (<1 min)', 'Short (1-5 min)', 'Medium (5-10 min)', 'Long (10-20 min)', 'Very Long (>20 min)'];
@@ -137,7 +187,7 @@ export async function GET(request: NextRequest) {
         });
 
         // Analyze title patterns from OUTLIERS specifically
-        const analysisVideos = topOutliers.length >= 3 ? topOutliers : sortedVideos.slice(0, 5);
+        const analysisVideos = topOutliers.length >= 3 ? topOutliers : sortedByZScore.slice(0, 5);
         const patternInsights = {
             usesNumbers: Math.round((analysisVideos.filter(v => /\d/.test(v.title)).length / analysisVideos.length) * 100),
             usesQuestions: Math.round((analysisVideos.filter(v => /\?/.test(v.title)).length / analysisVideos.length) * 100),
@@ -180,7 +230,7 @@ export async function GET(request: NextRequest) {
 
                 const outlierInfo = topOutliers.length >= 3
                     ? `OUTLIER TITLES (2x+ above average views - these are the WINNERS to learn from):\n${topOutliers.map((v, i) => `${i + 1}. "${v.title}" (${v.views.toLocaleString()} views, ${Math.round(v.views / overallAvg)}x avg)`).join('\n')}`
-                    : `TOP PERFORMERS:\n${sortedVideos.slice(0, 5).map((v, i) => `${i + 1}. "${v.title}" (${v.views.toLocaleString()} views)`).join('\n')}`;
+                    : `TOP PERFORMERS:\n${sortedByZScore.slice(0, 5).map((v, i) => `${i + 1}. "${v.title}" (${v.views.toLocaleString()} views, ${v.velocity}/day)`).join('\n')}`;
 
                 const prompt = `You are a YouTube title strategist who finds UNSATURATED angles.
 
@@ -250,17 +300,58 @@ Return ONLY valid JSON in this exact format:
                 topWords,
                 saturatedPatterns: saturatedPatterns.slice(0, 5)
             },
-            topOutliers: (topOutliers.length >= 3 ? topOutliers : sortedVideos.slice(0, 3)).slice(0, 3).map(v => ({
+            topOutliers: (topOutliers.length >= 3 ? topOutliers : sortedByZScore.slice(0, 3)).slice(0, 3).map(v => ({
                 title: v.title,
                 views: v.views,
                 thumbnail: v.thumbnail,
                 id: v.id,
                 lengthCategory: v.lengthCategory,
-                multiplier: Math.round(v.views / overallAvg * 10) / 10
+                velocity: v.velocity,
+                zScore: v.zScore,
+                isStatOutlier: v.isStatOutlier
             })),
-            outlierCount: topOutliers.length,
+            // Statistical metrics
+            statistics: {
+                outlierCount: statisticalOutliers.length,
+                outlierRate: Math.round((statisticalOutliers.length / videos.length) * 100),
+                avgVelocity: Math.round(velocityMean),
+                velocityStdDev: Math.round(velocityStdDev),
+                sampleSize: videos.length,
+                // Confidence score: based on sample size, outlier consistency, pattern clarity
+                confidence: calculateConfidence(videos.length, statisticalOutliers.length, patternInsights)
+            },
             totalAnalyzed: videos.length
         });
+
+        function calculateConfidence(
+            sampleSize: number,
+            outlierCount: number,
+            patterns: { usesNumbers: number; usesQuestions: number; usesAllCaps: number }
+        ): { score: number; level: string; factors: string[] } {
+            const factors: string[] = [];
+            let score = 50; // Base score
+
+            // Sample size factor (more samples = more confidence)
+            if (sampleSize >= 40) { score += 15; factors.push('Strong sample size (40+ videos)'); }
+            else if (sampleSize >= 25) { score += 10; factors.push('Good sample size (25+ videos)'); }
+            else { score -= 10; factors.push('Limited sample size'); }
+
+            // Outlier consistency (finding outliers = patterns exist)
+            if (outlierCount >= 5) { score += 15; factors.push('Clear outlier pattern (5+ outliers)'); }
+            else if (outlierCount >= 2) { score += 8; factors.push('Some outliers found'); }
+            else { score -= 5; factors.push('Few statistical outliers'); }
+
+            // Pattern clarity (strong patterns = more predictable)
+            const maxPattern = Math.max(patterns.usesNumbers, patterns.usesQuestions, patterns.usesAllCaps);
+            if (maxPattern >= 60) { score += 10; factors.push('Clear title pattern dominance'); }
+            else if (maxPattern >= 40) { score += 5; factors.push('Moderate pattern clarity'); }
+
+            // Cap score
+            score = Math.min(95, Math.max(20, score));
+
+            const level = score >= 75 ? 'High' : score >= 50 ? 'Medium' : 'Low';
+            return { score, level, factors };
+        }
 
     } catch (error) {
         if (axios.isAxiosError(error) && error.response) {

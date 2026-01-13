@@ -149,9 +149,22 @@ interface OptimizeResult {
     thumbnail: string;
     id: string;
     lengthCategory: string;
-    multiplier: number;
+    velocity?: number;
+    zScore?: number;
+    isStatOutlier?: boolean;
   }[];
-  outlierCount: number;
+  statistics: {
+    outlierCount: number;
+    outlierRate: number;
+    avgVelocity: number;
+    velocityStdDev: number;
+    sampleSize: number;
+    confidence: {
+      score: number;
+      level: string;
+      factors: string[];
+    };
+  };
   totalAnalyzed: number;
 }
 
@@ -460,14 +473,57 @@ export default function Home() {
                 Title Ideas for &quot;<span className="text-purple-600">{optimizeResult.idea}</span>&quot;
               </h1>
               <p className="text-gray-500 mt-2">
-                Analyzed {optimizeResult.totalAnalyzed} videos • {optimizeResult.outlierCount} outliers found
+                Analyzed {optimizeResult.totalAnalyzed} videos • {optimizeResult.statistics.outlierCount} statistical outliers (z&gt;2)
               </p>
+              <div className="flex justify-center gap-3 mt-3">
+                <span className={`px-3 py-1 rounded-full text-sm font-medium ${optimizeResult.statistics.confidence.level === 'High' ? 'bg-green-100 text-green-700' :
+                  optimizeResult.statistics.confidence.level === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                    'bg-red-100 text-red-700'
+                  }`}>
+                  {optimizeResult.statistics.confidence.score}% Confidence
+                </span>
+                <span className="px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm">
+                  {optimizeResult.statistics.avgVelocity}/day avg velocity
+                </span>
+              </div>
               <button
                 onClick={() => { setOptimizeResult(null); setQuery(''); }}
-                className="text-purple-600 hover:underline text-sm mt-2"
+                className="text-purple-600 hover:underline text-sm mt-3"
               >
                 ← New search
               </button>
+            </div>
+
+            {/* Confidence Factors */}
+            <div className="card p-6">
+              <div className="section-header">
+                <div className={`section-icon ${optimizeResult.statistics.confidence.level === 'High' ? 'bg-green-100 text-green-600' :
+                  optimizeResult.statistics.confidence.level === 'Medium' ? 'bg-yellow-100 text-yellow-600' :
+                    'bg-red-100 text-red-600'
+                  }`}>📊</div>
+                <h2 className="text-title text-gray-900">Analysis Confidence: {optimizeResult.statistics.confidence.level}</h2>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {optimizeResult.statistics.confidence.factors.map((factor, i) => (
+                  <span key={i} className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-sm">
+                    {factor}
+                  </span>
+                ))}
+              </div>
+              <div className="grid grid-cols-3 gap-4 mt-4 text-center">
+                <div className="p-3 bg-gray-50 rounded-xl">
+                  <div className="text-xl font-bold text-gray-900">{optimizeResult.statistics.sampleSize}</div>
+                  <div className="text-xs text-gray-500">videos analyzed</div>
+                </div>
+                <div className="p-3 bg-gray-50 rounded-xl">
+                  <div className="text-xl font-bold text-gray-900">{optimizeResult.statistics.outlierRate}%</div>
+                  <div className="text-xs text-gray-500">outlier rate</div>
+                </div>
+                <div className="p-3 bg-gray-50 rounded-xl">
+                  <div className="text-xl font-bold text-gray-900">±{formatNumber(optimizeResult.statistics.velocityStdDev)}</div>
+                  <div className="text-xs text-gray-500">velocity std dev</div>
+                </div>
+              </div>
             </div>
 
             {/* Recommended Length */}
@@ -525,24 +581,34 @@ export default function Home() {
             <div className="card p-6">
               <div className="section-header">
                 <div className="section-icon bg-orange-100 text-orange-600">🔥</div>
-                <h2 className="text-title text-gray-900">Outliers to Learn From</h2>
+                <h2 className="text-title text-gray-900">Statistical Outliers (z-score &gt; 2)</h2>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+              <p className="text-sm text-gray-500 mb-4">
+                Videos performing significantly above average velocity (views/day)
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {optimizeResult.topOutliers.map((video, i) => (
                   <a
                     key={i}
                     href={`https://youtube.com/watch?v=${video.id}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="group rounded-xl overflow-hidden bg-gray-50 hover:ring-2 hover:ring-orange-400 transition-all"
+                    className="group relative rounded-xl overflow-hidden bg-gray-50 hover:ring-2 hover:ring-orange-400 transition-all"
                   >
                     <img
                       src={video.thumbnail}
                       alt={video.title}
                       className="w-full aspect-video object-cover"
                     />
-                    <div className="absolute top-2 right-2 bg-orange-500 text-white text-xs font-bold px-2 py-1 rounded-full">
-                      {video.multiplier}x
+                    <div className="absolute top-2 right-2 flex gap-1">
+                      {video.isStatOutlier && (
+                        <span className="bg-orange-500 text-white text-xs font-bold px-2 py-1 rounded-full">
+                          z={video.zScore}
+                        </span>
+                      )}
+                      <span className="bg-blue-500 text-white text-xs font-bold px-2 py-1 rounded-full">
+                        {formatNumber(video.velocity || 0)}/day
+                      </span>
                     </div>
                     <div className="p-3">
                       <p className="text-sm font-medium text-gray-900 line-clamp-2">{video.title}</p>
