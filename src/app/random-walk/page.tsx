@@ -129,7 +129,7 @@ export default function RandomWalkPage() {
                     Optimize your title
                 </h1>
                 <p className="text-neutral-500 mb-10">
-                    MCMC-based exploration using patterns from top performers
+                    Generates variations based on patterns from top performers
                 </p>
 
                 {/* Inputs */}

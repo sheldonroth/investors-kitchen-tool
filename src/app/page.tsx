@@ -50,7 +50,7 @@ interface ToolCard {
 }
 
 const TOOLS: ToolCard[] = [
-  { id: 'optimize', icon: <Shuffle className="w-5 h-5" strokeWidth={1.5} />, name: 'Optimize Title', description: 'Improve titles with MCMC random walk', href: '/random-walk', color: 'violet' },
+  { id: 'optimize', icon: <Shuffle className="w-5 h-5" strokeWidth={1.5} />, name: 'Optimize Title', description: 'Generate better title variations', href: '/random-walk', color: 'violet' },
   { id: 'gaps', icon: <BarChart3 className="w-5 h-5" strokeWidth={1.5} />, name: 'Find Gaps', description: 'Discover underserved topics', href: '/gaps', color: 'amber' },
   { id: 'oracle', icon: <Search className="w-5 h-5" strokeWidth={1.5} />, name: 'Research Tools', description: 'Failures, trends, competitors, thumbnails', href: '/oracle', color: 'blue' },
 ];
