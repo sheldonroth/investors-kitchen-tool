@@ -180,6 +180,9 @@ export default function Home() {
             <a href="/oracle" className="text-sm text-neutral-500 hover:text-neutral-900 transition-colors">
               Oracle
             </a>
+            <a href="/random-walk" className="text-sm text-neutral-500 hover:text-neutral-900 transition-colors">
+              Optimizer
+            </a>
           </div>
         </div>
       </nav>
