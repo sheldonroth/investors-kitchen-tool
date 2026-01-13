@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.YOUTUBE_API_KEY;
 const BASE_URL = 'https://www.googleapis.com/youtube/v3';
 
 interface TitlePattern {
@@ -29,6 +31,7 @@ interface WalkResult {
     input: string;
     bestTitle: TitleCandidate;
     walkPath: TitleCandidate[];
+    geminiTitles: { title: string; approach: string }[];
     methodology: {
         algorithm: string;
         fitnessFunction: string;
@@ -448,15 +451,61 @@ export async function GET(request: NextRequest) {
             .sort((a, b) => b.score - a.score)
             .slice(0, 8);
 
-        // 12. Calculate confidence based on data quality
+        // 12. Generate semantic titles with Gemini
+        let geminiTitles: { title: string; approach: string }[] = [];
+
+        if (GEMINI_API_KEY) {
+            try {
+                const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+                const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+                const outlierTitles = outliers.slice(0, 5).map((v: { title: string; views: number }) =>
+                    `"${v.title}" (${v.views.toLocaleString()} views)`
+                ).join('\n');
+
+                const prompt = `You are a YouTube title expert. Given an original title, generate 5 creative alternative titles that preserve the VIDEO'S CORE MESSAGE but express it differently.
+
+ORIGINAL TITLE: "${title}"
+NICHE: ${niche}
+
+TOP PERFORMERS IN THIS NICHE:
+${outlierTitles || 'No outliers available'}
+
+IMPORTANT: 
+- Capture the ESSENCE of what the video is about
+- Each title should take a DIFFERENT angle (curiosity, benefit, story, question, contrast)
+- Keep titles 40-60 characters
+- Don't just add numbers/hooks mechanically - be creative
+
+Return ONLY valid JSON:
+{"titles":[{"title":"...","approach":"one-word approach like curiosity/benefit/story/question/contrast"}]}`;
+
+                const result = await model.generateContent(prompt);
+                const responseText = result.response.text();
+                const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+
+                if (jsonMatch) {
+                    const parsed = JSON.parse(jsonMatch[0]);
+                    geminiTitles = (parsed.titles || []).map((t: { title: string; approach: string }) => ({
+                        title: t.title,
+                        approach: t.approach
+                    }));
+                }
+            } catch (error) {
+                console.error('Gemini title generation failed:', error);
+            }
+        }
+
+        // 13. Calculate confidence based on data quality
         const patternConfidence = outliers.length >= 10 ? 'high' : outliers.length >= 5 ? 'medium' : 'low';
 
         const result: WalkResult = {
             input: title,
             bestTitle,
             walkPath: topAlternatives,
+            geminiTitles, // AI-generated semantic variations
             methodology: {
-                algorithm: 'Metropolis-Hastings random walk with simulated annealing',
+                algorithm: 'Hybrid: Pattern-based random walk + AI semantic generation',
                 fitnessFunction: 'Pattern match (40%) - Saturation penalty (20%) + Length optimization (20%) + Hook bonus (20%)',
                 iterations,
                 acceptanceCriteria: 'Accept improvements always; accept downgrades with probability exp(delta/temperature)',

@@ -12,7 +12,8 @@ import {
     TrendingDown,
     Info,
     ChevronDown,
-    ChevronRight
+    ChevronRight,
+    Sparkles
 } from 'lucide-react';
 
 interface TitleCandidate {
@@ -40,6 +41,7 @@ interface WalkResult {
     input: string;
     bestTitle: TitleCandidate;
     walkPath: TitleCandidate[];
+    geminiTitles?: { title: string; approach: string }[];
     methodology: {
         algorithm: string;
         fitnessFunction: string;
@@ -285,6 +287,38 @@ export default function RandomWalkPage() {
                             ))}
                         </div>
                     </div>
+
+                    {/* Gemini AI Titles */}
+                    {result.geminiTitles && result.geminiTitles.length > 0 && (
+                        <div className="bg-violet-950/30 rounded-xl border border-violet-800/50 overflow-hidden">
+                            <div className="p-5 border-b border-violet-800/30 flex items-center gap-2">
+                                <Sparkles className="w-4 h-4 text-violet-400" strokeWidth={1.5} />
+                                <p className="text-sm text-violet-400 uppercase tracking-wide">AI-generated alternatives</p>
+                            </div>
+                            <div className="divide-y divide-violet-800/30">
+                                {result.geminiTitles.map((t, i) => (
+                                    <div key={i} className="p-5 hover:bg-violet-800/10 transition-colors">
+                                        <div className="flex items-center justify-between gap-4">
+                                            <div className="flex-1">
+                                                <p className="text-white mb-1">{t.title}</p>
+                                                <p className="text-xs text-violet-400/70">Approach: {t.approach}</p>
+                                            </div>
+                                            <button
+                                                onClick={() => copyTitle(t.title, 100 + i)}
+                                                className="p-2 text-neutral-500 hover:text-white transition-colors"
+                                            >
+                                                {copiedIndex === 100 + i ? (
+                                                    <Check className="w-4 h-4 text-emerald-400" strokeWidth={1.5} />
+                                                ) : (
+                                                    <Copy className="w-4 h-4" strokeWidth={1.5} />
+                                                )}
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     {/* Learned Patterns */}
                     <div className="grid md:grid-cols-2 gap-4">
