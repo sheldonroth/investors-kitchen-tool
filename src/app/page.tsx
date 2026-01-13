@@ -119,6 +119,42 @@ const exampleQueries = [
   'study with me',
 ];
 
+interface TitleSuggestion {
+  title: string;
+  reasoning: string;
+}
+
+interface OptimizeResult {
+  idea: string;
+  recommendedLength: {
+    bucket: string;
+    multiplier: number;
+    avgViews: number;
+    reason: string;
+    isGap?: boolean;
+  };
+  titleSuggestions: TitleSuggestion[];
+  patternInsights: {
+    usesNumbers: number;
+    usesQuestions: number;
+    usesEmoji: number;
+    usesAllCaps: number;
+    avgTitleLength: number;
+    topWords: string[];
+    saturatedPatterns: string[];
+  };
+  topOutliers: {
+    title: string;
+    views: number;
+    thumbnail: string;
+    id: string;
+    lengthCategory: string;
+    multiplier: number;
+  }[];
+  outlierCount: number;
+  totalAnalyzed: number;
+}
+
 const regions = [
   { code: 'US', name: 'United States' },
   { code: 'GB', name: 'United Kingdom' },
@@ -133,12 +169,15 @@ const regions = [
 ];
 
 export default function Home() {
+  const [mode, setMode] = useState<'analyze' | 'optimize'>('analyze');
   const [query, setQuery] = useState('');
   const [region, setRegion] = useState('US');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [optimizeResult, setOptimizeResult] = useState<OptimizeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showPrompt, setShowPrompt] = useState(false);
+  const [copiedTitle, setCopiedTitle] = useState<number | null>(null);
 
   const handleAnalyze = async (searchQuery?: string) => {
     const q = searchQuery || query;
@@ -165,10 +204,39 @@ export default function Home() {
     }
   };
 
+  const handleOptimize = async () => {
+    if (!query.trim()) return;
+
+    setLoading(true);
+    setError(null);
+    setOptimizeResult(null);
+
+    try {
+      const res = await fetch(`/api/optimize?idea=${encodeURIComponent(query)}&region=${region}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.error || 'Something went wrong');
+      } else {
+        setOptimizeResult(data);
+      }
+    } catch {
+      setError('Failed to optimize title');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const copyPrompt = () => {
     if (result?.thumbnailPrompt) {
       navigator.clipboard.writeText(result.thumbnailPrompt);
     }
+  };
+
+  const copyTitle = (title: string, index: number) => {
+    navigator.clipboard.writeText(title);
+    setCopiedTitle(index);
+    setTimeout(() => setCopiedTitle(null), 2000);
   };
 
   const formatNumber = (num: number) => {
@@ -186,20 +254,50 @@ export default function Home() {
 
       <div className="container-professional page-wrapper relative z-10">
         {/* Hero Section */}
-        {!result && !loading && (
+        {!result && !optimizeResult && !loading && (
           <>
             <div className="text-center mb-12 pt-8">
               <div className="inline-flex items-center gap-2 bg-blue-50 text-blue-600 px-4 py-2 rounded-full text-sm font-medium mb-6">
                 <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
                 Powered by YouTube API + Google Trends + Gemini AI
               </div>
+
+              {/* Mode Toggle */}
+              <div className="flex justify-center mb-8">
+                <div className="inline-flex bg-gray-100 rounded-xl p-1">
+                  <button
+                    onClick={() => { setMode('analyze'); setResult(null); setOptimizeResult(null); }}
+                    className={`px-6 py-2.5 rounded-lg text-sm font-medium transition-all ${mode === 'analyze'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                  >
+                    🔍 Analyze Niche
+                  </button>
+                  <button
+                    onClick={() => { setMode('optimize'); setResult(null); setOptimizeResult(null); }}
+                    className={`px-6 py-2.5 rounded-lg text-sm font-medium transition-all ${mode === 'optimize'
+                      ? 'bg-white text-gray-900 shadow-sm'
+                      : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                  >
+                    🎬 Optimize Title
+                  </button>
+                </div>
+              </div>
+
               <h1 className="text-display text-gray-900 mb-4">
-                Find Your Next
-                <span className="text-blue-600"> Viral Niche</span>
+                {mode === 'analyze' ? (
+                  <>Find Your Next<span className="text-blue-600"> Viral Niche</span></>
+                ) : (
+                  <>Optimize Your<span className="text-purple-600"> Video Title</span></>
+                )}
               </h1>
               <p className="text-xl text-gray-500 max-w-2xl mx-auto leading-relaxed">
-                Analyze any YouTube niche to discover untapped content gaps,
-                trending topics, and data-driven insights for your next video.
+                {mode === 'analyze'
+                  ? 'Analyze any YouTube niche to discover untapped content gaps, trending topics, and data-driven insights for your next video.'
+                  : 'Enter your video idea and get AI-optimized title suggestions based on what\'s working in your niche.'
+                }
               </p>
             </div>
 
@@ -214,8 +312,8 @@ export default function Home() {
                     type="text"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleAnalyze()}
-                    placeholder="Enter a YouTube search query..."
+                    onKeyDown={(e) => e.key === 'Enter' && (mode === 'analyze' ? handleAnalyze() : handleOptimize())}
+                    placeholder={mode === 'analyze' ? "Enter a YouTube search query..." : "Enter your video idea or title..."}
                     className="w-full bg-transparent border-none outline-none pl-12 pr-4 py-4 text-lg"
                   />
                 </div>
@@ -229,11 +327,11 @@ export default function Home() {
                   ))}
                 </select>
                 <button
-                  onClick={() => handleAnalyze()}
+                  onClick={() => mode === 'analyze' ? handleAnalyze() : handleOptimize()}
                   disabled={loading || !query.trim()}
-                  className="btn-primary px-8 text-base"
+                  className={`px-8 text-base ${mode === 'optimize' ? 'btn-primary bg-purple-600 hover:bg-purple-700' : 'btn-primary'}`}
                 >
-                  Analyze
+                  {mode === 'analyze' ? 'Analyze' : 'Optimize'}
                 </button>
               </div>
 
@@ -349,6 +447,160 @@ export default function Home() {
             <div className="grid md:grid-cols-2 gap-6">
               <div className="skeleton h-48 rounded-xl" />
               <div className="skeleton h-48 rounded-xl" />
+            </div>
+          </div>
+        )}
+
+        {/* Optimize Results */}
+        {optimizeResult && !loading && (
+          <div className="space-y-8">
+            {/* Header */}
+            <div className="text-center mb-6">
+              <h1 className="text-2xl font-semibold text-gray-900">
+                Title Ideas for &quot;<span className="text-purple-600">{optimizeResult.idea}</span>&quot;
+              </h1>
+              <p className="text-gray-500 mt-2">
+                Analyzed {optimizeResult.totalAnalyzed} videos • {optimizeResult.outlierCount} outliers found
+              </p>
+              <button
+                onClick={() => { setOptimizeResult(null); setQuery(''); }}
+                className="text-purple-600 hover:underline text-sm mt-2"
+              >
+                ← New search
+              </button>
+            </div>
+
+            {/* Recommended Length */}
+            <div className="card p-6">
+              <div className="section-header">
+                <div className="section-icon bg-green-100 text-green-600">⏱️</div>
+                <h2 className="text-title text-gray-900">Recommended Length</h2>
+              </div>
+              <div className="flex items-center gap-4 mt-4">
+                <div className="text-4xl font-bold text-green-600">{optimizeResult.recommendedLength.bucket}</div>
+                <div className="text-left">
+                  <div className="text-lg font-medium text-gray-900">
+                    {optimizeResult.recommendedLength.multiplier}x average views
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    ~{formatNumber(optimizeResult.recommendedLength.avgViews)} views in this length
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Title Suggestions */}
+            <div className="card p-6">
+              <div className="section-header">
+                <div className="section-icon bg-purple-100 text-purple-600">✨</div>
+                <h2 className="text-title text-gray-900">AI Title Suggestions</h2>
+              </div>
+              <p className="text-sm text-gray-500 mb-4">
+                Optimized for unsaturated angles with outlier-style packaging
+              </p>
+              <div className="space-y-3">
+                {optimizeResult.titleSuggestions.map((suggestion, i) => (
+                  <div
+                    key={i}
+                    className="group bg-gray-50 rounded-xl p-4 hover:bg-purple-50 transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1">
+                        <div className="text-lg font-medium text-gray-900">{suggestion.title}</div>
+                        <div className="text-sm text-gray-500 mt-1">{suggestion.reasoning}</div>
+                      </div>
+                      <button
+                        onClick={() => copyTitle(suggestion.title, i)}
+                        className="shrink-0 px-3 py-1.5 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 transition-colors"
+                      >
+                        {copiedTitle === i ? '✓ Copied' : 'Copy'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Outlier References */}
+            <div className="card p-6">
+              <div className="section-header">
+                <div className="section-icon bg-orange-100 text-orange-600">🔥</div>
+                <h2 className="text-title text-gray-900">Outliers to Learn From</h2>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                {optimizeResult.topOutliers.map((video, i) => (
+                  <a
+                    key={i}
+                    href={`https://youtube.com/watch?v=${video.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="group rounded-xl overflow-hidden bg-gray-50 hover:ring-2 hover:ring-orange-400 transition-all"
+                  >
+                    <img
+                      src={video.thumbnail}
+                      alt={video.title}
+                      className="w-full aspect-video object-cover"
+                    />
+                    <div className="absolute top-2 right-2 bg-orange-500 text-white text-xs font-bold px-2 py-1 rounded-full">
+                      {video.multiplier}x
+                    </div>
+                    <div className="p-3">
+                      <p className="text-sm font-medium text-gray-900 line-clamp-2">{video.title}</p>
+                      <p className="text-xs text-gray-500 mt-1">{formatNumber(video.views)} views • {video.lengthCategory}</p>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+
+            {/* Pattern Insights */}
+            <div className="card p-6">
+              <div className="section-header">
+                <div className="section-icon bg-blue-100 text-blue-600">📊</div>
+                <h2 className="text-title text-gray-900">Outlier Patterns</h2>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+                <div className="text-center p-3 bg-gray-50 rounded-xl">
+                  <div className="text-2xl font-bold text-gray-900">{optimizeResult.patternInsights.usesNumbers}%</div>
+                  <div className="text-sm text-gray-500">use numbers</div>
+                </div>
+                <div className="text-center p-3 bg-gray-50 rounded-xl">
+                  <div className="text-2xl font-bold text-gray-900">{optimizeResult.patternInsights.usesQuestions}%</div>
+                  <div className="text-sm text-gray-500">ask questions</div>
+                </div>
+                <div className="text-center p-3 bg-gray-50 rounded-xl">
+                  <div className="text-2xl font-bold text-gray-900">{optimizeResult.patternInsights.usesAllCaps}%</div>
+                  <div className="text-sm text-gray-500">use ALL CAPS</div>
+                </div>
+                <div className="text-center p-3 bg-gray-50 rounded-xl">
+                  <div className="text-2xl font-bold text-gray-900">{optimizeResult.patternInsights.avgTitleLength}</div>
+                  <div className="text-sm text-gray-500">avg characters</div>
+                </div>
+              </div>
+              {optimizeResult.patternInsights.topWords.length > 0 && (
+                <div className="mt-4">
+                  <div className="text-sm text-gray-500 mb-2">Power words from outliers:</div>
+                  <div className="flex flex-wrap gap-2">
+                    {optimizeResult.patternInsights.topWords.map((word, i) => (
+                      <span key={i} className="px-3 py-1 bg-blue-50 text-blue-700 rounded-full text-sm">
+                        {word}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {optimizeResult.patternInsights.saturatedPatterns.length > 0 && (
+                <div className="mt-4">
+                  <div className="text-sm text-gray-500 mb-2">Saturated patterns to avoid:</div>
+                  <div className="flex flex-wrap gap-2">
+                    {optimizeResult.patternInsights.saturatedPatterns.map((pattern, i) => (
+                      <span key={i} className="px-3 py-1 bg-red-50 text-red-700 rounded-full text-sm">
+                        &quot;{pattern}...&quot;
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
