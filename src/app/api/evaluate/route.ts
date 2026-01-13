@@ -40,6 +40,69 @@ function calculateStdDev(values: number[], mean: number): number {
     return Math.sqrt(squaredDiffs.reduce((sum, v) => sum + v, 0) / values.length);
 }
 
+// Flesch-Kincaid Readability Analysis
+function countSyllables(word: string): number {
+    word = word.toLowerCase().replace(/[^a-z]/g, '');
+    if (word.length <= 3) return 1;
+
+    // Count vowel groups
+    const vowelGroups = word.match(/[aeiouy]+/g);
+    let count = vowelGroups ? vowelGroups.length : 1;
+
+    // Adjust for silent e
+    if (word.endsWith('e')) count--;
+    // Adjust for le endings
+    if (word.endsWith('le') && word.length > 2 && !/[aeiouy]/.test(word.charAt(word.length - 3))) count++;
+
+    return Math.max(1, count);
+}
+
+function calculateReadability(text: string): {
+    gradeLevel: number;
+    readingEase: number;
+    label: string;
+    interpretation: string;
+} {
+    const words = text.split(/\s+/).filter(w => w.length > 0);
+    const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+
+    if (words.length === 0 || sentences.length === 0) {
+        return { gradeLevel: 0, readingEase: 100, label: 'Unknown', interpretation: 'Cannot analyze' };
+    }
+
+    const totalSyllables = words.reduce((sum, word) => sum + countSyllables(word), 0);
+    const avgWordsPerSentence = words.length / sentences.length;
+    const avgSyllablesPerWord = totalSyllables / words.length;
+
+    // Flesch-Kincaid Grade Level
+    const gradeLevel = Math.round((0.39 * avgWordsPerSentence + 11.8 * avgSyllablesPerWord - 15.59) * 10) / 10;
+
+    // Flesch Reading Ease (0-100, higher = easier)
+    const readingEase = Math.round((206.835 - 1.015 * avgWordsPerSentence - 84.6 * avgSyllablesPerWord) * 10) / 10;
+
+    let label: string;
+    let interpretation: string;
+
+    if (gradeLevel <= 5) {
+        label = 'Very Easy';
+        interpretation = 'Accessible to everyone. May lack specificity.';
+    } else if (gradeLevel <= 8) {
+        label = 'Easy';
+        interpretation = 'Optimal for broad YouTube audience.';
+    } else if (gradeLevel <= 10) {
+        label = 'Moderate';
+        interpretation = 'Good balance of clarity and depth.';
+    } else if (gradeLevel <= 12) {
+        label = 'Challenging';
+        interpretation = 'May limit audience reach.';
+    } else {
+        label = 'Complex';
+        interpretation = 'Potentially too complex for casual viewers.';
+    }
+
+    return { gradeLevel, readingEase, label, interpretation };
+}
+
 // Calculate confidence based on sample size and data quality
 function calculateConfidence(sampleSize: number, outlierCount: number, trendsAvailable: boolean): {
     level: 'low' | 'medium' | 'high';
@@ -344,6 +407,38 @@ export async function GET(request: NextRequest) {
             .filter(([_, count]) => count >= 3)
             .forEach(([pattern]) => saturatedPatterns.push(pattern));
 
+        // ===== 8.5. READABILITY ANALYSIS =====
+        // Calculate readability for outliers (top performers) vs underperformers
+        const underperformers = videos.filter(v => (v.zScore || 0) < -0.5);
+
+        const outlierReadability = topOutliers.map(v => calculateReadability(v.title));
+        const underperformerReadability = underperformers.slice(0, 10).map(v => calculateReadability(v.title));
+
+        const avgOutlierGrade = outlierReadability.length > 0
+            ? Math.round(outlierReadability.reduce((sum, r) => sum + r.gradeLevel, 0) / outlierReadability.length * 10) / 10
+            : 0;
+        const avgUnderperformerGrade = underperformerReadability.length > 0
+            ? Math.round(underperformerReadability.reduce((sum, r) => sum + r.gradeLevel, 0) / underperformerReadability.length * 10) / 10
+            : 0;
+
+        const readabilityInsight = {
+            optimalGradeLevel: avgOutlierGrade,
+            outlierAvg: avgOutlierGrade,
+            underperformerAvg: avgUnderperformerGrade,
+            difference: Math.round((avgUnderperformerGrade - avgOutlierGrade) * 10) / 10,
+            interpretation: avgOutlierGrade <= 8
+                ? 'Top performers use simple, accessible language'
+                : avgOutlierGrade <= 10
+                    ? 'Moderate complexity works in this niche'
+                    : 'This niche tolerates complex titles',
+            recommendation: avgOutlierGrade < avgUnderperformerGrade - 1
+                ? 'Simpler titles correlate with better performance here'
+                : avgOutlierGrade > avgUnderperformerGrade + 1
+                    ? 'More sophisticated language may work better'
+                    : 'Readability has minimal impact in this niche',
+            sampleSize: { outliers: topOutliers.length, underperformers: underperformers.length }
+        };
+
         // ===== 9. GENERATE TITLE SUGGESTIONS =====
         let titleSuggestions: { title: string; reasoning: string }[] = [];
 
@@ -455,6 +550,9 @@ Return ONLY JSON: {"titles":[{"title":"...","reasoning":"..."}]}`;
                 topWords,
                 saturatedPatterns: saturatedPatterns.slice(0, 5)
             },
+
+            // Readability analysis
+            readability: readabilityInsight,
 
             // Data quality indicators
             dataQuality: {
