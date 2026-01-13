@@ -88,6 +88,15 @@ const TOOLS: ToolCard[] = [
     gradient: 'from-rose-500/10 to-pink-500/10',
     iconBg: 'bg-rose-500/20 text-rose-400'
   },
+  {
+    id: 'audit',
+    icon: <Target className="w-5 h-5" strokeWidth={1.5} />,
+    name: 'Video Audit',
+    description: 'Analyze any video to learn what worked',
+    href: '/audit',
+    gradient: 'from-amber-500/10 to-orange-500/10',
+    iconBg: 'bg-amber-500/20 text-amber-400'
+  },
 ];
 
 const regions = [
