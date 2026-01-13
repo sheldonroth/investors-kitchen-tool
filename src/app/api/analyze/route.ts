@@ -315,18 +315,30 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ videos: [], analysis: null });
         }
 
-        const videoIds = allItems.map((item: { id: { videoId: string } }) => item.id.videoId).join(',');
+        const allVideoIds = allItems.map((item: { id: { videoId: string } }) => item.id.videoId);
 
-        // Get detailed statistics
-        const statsResponse = await axios.get(`${BASE_URL}/videos`, {
-            params: {
-                part: 'snippet,contentDetails,statistics',
-                id: videoIds,
-                key: YOUTUBE_API_KEY
-            }
-        });
+        // Batch video IDs in groups of 50 (API limit)
+        const batchedIds: string[][] = [];
+        for (let i = 0; i < allVideoIds.length; i += 50) {
+            batchedIds.push(allVideoIds.slice(i, i + 50));
+        }
 
-        const videos: VideoData[] = statsResponse.data.items.map((item: {
+        // Get detailed statistics for all videos
+        const statsResponses = await Promise.all(
+            batchedIds.map(ids =>
+                axios.get(`${BASE_URL}/videos`, {
+                    params: {
+                        part: 'snippet,contentDetails,statistics',
+                        id: ids.join(','),
+                        key: YOUTUBE_API_KEY
+                    }
+                })
+            )
+        );
+
+        const allVideoItems = statsResponses.flatMap(res => res.data.items || []);
+
+        const videos: VideoData[] = allVideoItems.map((item: {
             id: string;
             snippet: { title: string; channelId: string; channelTitle: string; publishedAt: string; thumbnails: { high?: { url: string } } };
             contentDetails: { duration: string };
