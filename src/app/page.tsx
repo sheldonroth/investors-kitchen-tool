@@ -115,12 +115,20 @@ export default function Home() {
         <p className="text-lg text-gray-500 mb-4">
           Is your idea worth making? What should you title it?
         </p>
-        <a
-          href="/gaps"
-          className="inline-flex items-center gap-2 px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-full hover:bg-slate-800 transition-colors mb-8"
-        >
-          📊 Find Content Gaps →
-        </a>
+        <div className="flex gap-2 justify-center mb-8">
+          <a
+            href="/gaps"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-full hover:bg-slate-800 transition-colors"
+          >
+            📊 Content Gaps
+          </a>
+          <a
+            href="/oracle"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-full hover:bg-purple-500 transition-colors"
+          >
+            🔮 The Oracle
+          </a>
+        </div>
 
         {/* Search */}
         <div className="flex gap-2 max-w-xl mx-auto">
