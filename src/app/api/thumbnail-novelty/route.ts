@@ -114,9 +114,9 @@ export async function GET(request: NextRequest) {
             }
         });
 
-        // 4. Analyze top 8 competitor thumbnails
+        // 4. Analyze top 12 competitor thumbnails (increased from 8 for better statistics)
         const competitors: ThumbnailAnalysis[] = [];
-        const topVideos = statsResponse.data.items.slice(0, 8);
+        const topVideos = statsResponse.data.items.slice(0, 12);
 
         for (const video of topVideos) {
             const thumbUrl = video.snippet.thumbnails.high?.url || video.snippet.thumbnails.default?.url;

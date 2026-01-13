@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
 import googleTrends from 'google-trends-api';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { logModifiedZScore, characterReadability, meanDifferenceCI } from '@/lib/stats';
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.YOUTUBE_API_KEY;
@@ -228,17 +229,16 @@ export async function GET(request: NextRequest) {
             };
         });
 
-        // Calculate z-scores for outlier detection
+        // Calculate z-scores using log-modified method (robust to outliers)
         const velocities = rawVideos.map(v => v.velocity);
-        const velocityMean = calculateMean(velocities);
-        const velocityStdDev = calculateStdDev(velocities, velocityMean);
 
         const videos: VideoData[] = rawVideos.map(v => {
-            const zScore = velocityStdDev > 0 ? (v.velocity - velocityMean) / velocityStdDev : 0;
+            // Use log-modified z-score (MAD-based, handles right-skewed data)
+            const zScore = logModifiedZScore(v.velocity, velocities);
             return {
                 ...v,
                 zScore: Math.round(zScore * 100) / 100,
-                isOutlier: zScore > 2
+                isOutlier: zScore > 1.5 // More conservative threshold (z > 1.5)
             };
         });
 
@@ -407,36 +407,45 @@ export async function GET(request: NextRequest) {
             .filter(([_, count]) => count >= 3)
             .forEach(([pattern]) => saturatedPatterns.push(pattern));
 
-        // ===== 8.5. READABILITY ANALYSIS =====
-        // Calculate readability for outliers (top performers) vs underperformers
+        // ===== 8.5. READABILITY ANALYSIS (Character-level, better for titles) =====
         const underperformers = videos.filter(v => (v.zScore || 0) < -0.5);
 
-        const outlierReadability = topOutliers.map(v => calculateReadability(v.title));
-        const underperformerReadability = underperformers.slice(0, 10).map(v => calculateReadability(v.title));
+        // Use character-level readability (not Flesch-Kincaid - titles aren't sentences)
+        const outlierReadability = topOutliers.map(v => characterReadability(v.title));
+        const underperformerReadability = underperformers.slice(0, 10).map(v => characterReadability(v.title));
 
-        const avgOutlierGrade = outlierReadability.length > 0
-            ? Math.round(outlierReadability.reduce((sum, r) => sum + r.gradeLevel, 0) / outlierReadability.length * 10) / 10
+        const outlierScores = outlierReadability.map(r => r.score);
+        const underperformerScores = underperformerReadability.map(r => r.score);
+
+        const avgOutlierScore = outlierScores.length > 0
+            ? Math.round(outlierScores.reduce((sum, s) => sum + s, 0) / outlierScores.length)
             : 0;
-        const avgUnderperformerGrade = underperformerReadability.length > 0
-            ? Math.round(underperformerReadability.reduce((sum, r) => sum + r.gradeLevel, 0) / underperformerReadability.length * 10) / 10
+        const avgUnderperformerScore = underperformerScores.length > 0
+            ? Math.round(underperformerScores.reduce((sum, s) => sum + s, 0) / underperformerScores.length)
             : 0;
+
+        // Calculate confidence interval for the difference
+        const readabilityCI = meanDifferenceCI(outlierScores, underperformerScores);
 
         const readabilityInsight = {
-            optimalGradeLevel: avgOutlierGrade,
-            outlierAvg: avgOutlierGrade,
-            underperformerAvg: avgUnderperformerGrade,
-            difference: Math.round((avgUnderperformerGrade - avgOutlierGrade) * 10) / 10,
-            interpretation: avgOutlierGrade <= 8
+            optimalScore: avgOutlierScore,
+            outlierAvg: avgOutlierScore,
+            underperformerAvg: avgUnderperformerScore,
+            difference: readabilityCI.difference,
+            statisticallySignificant: readabilityCI.significant,
+            confidenceInterval: { lower: readabilityCI.lowerBound, upper: readabilityCI.upperBound },
+            interpretation: avgOutlierScore >= 60
                 ? 'Top performers use simple, accessible language'
-                : avgOutlierGrade <= 10
-                    ? 'Moderate complexity works in this niche'
+                : avgOutlierScore >= 40
+                    ? 'Moderate vocabulary works in this niche'
                     : 'This niche tolerates complex titles',
-            recommendation: avgOutlierGrade < avgUnderperformerGrade - 1
-                ? 'Simpler titles correlate with better performance here'
-                : avgOutlierGrade > avgUnderperformerGrade + 1
-                    ? 'More sophisticated language may work better'
-                    : 'Readability has minimal impact in this niche',
-            sampleSize: { outliers: topOutliers.length, underperformers: underperformers.length }
+            recommendation: readabilityCI.significant && readabilityCI.difference > 5
+                ? 'Simpler titles correlate with better performance (statistically significant)'
+                : readabilityCI.significant && readabilityCI.difference < -5
+                    ? 'More sophisticated language correlates with better performance'
+                    : 'Readability difference not statistically significant',
+            sampleSize: { outliers: topOutliers.length, underperformers: underperformers.length },
+            sampleSufficient: readabilityCI.sampleSufficient
         };
 
         // ===== 9. GENERATE TITLE SUGGESTIONS =====

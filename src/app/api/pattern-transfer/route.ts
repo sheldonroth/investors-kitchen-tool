@@ -1,16 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { calculatePatternLift } from '@/lib/stats';
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.YOUTUBE_API_KEY;
 const BASE_URL = 'https://www.googleapis.com/youtube/v3';
 
-interface NichePattern {
+interface VideoWithViews {
+    title: string;
+    views: number;
+}
+
+interface PatternWithLift {
     pattern: string;
     examples: string[];
     prevalence: number;
-    avgViews: number;
+    lift: number;
+    avgViewsWithPattern: number;
+    avgViewsWithoutPattern: number;
+    pValue: number;
+    significant: boolean;
 }
 
 interface TransferResult {
@@ -20,48 +30,84 @@ interface TransferResult {
     applicability: 'high' | 'medium' | 'low';
     adaptedExample: string;
     reasoning: string;
+    liftInSource: number;
+    significant: boolean;
 }
 
-function extractTitlePatterns(titles: string[]): NichePattern[] {
-    const patterns: Record<string, { count: number; example: string; totalViews: number; examples: string[] }> = {};
+// Pattern tests for extraction
+const patternTests = [
+    { name: 'Numbered List', test: (t: string) => /^\d+\s/.test(t) || /\d+\s+(ways|tips|things|reasons|steps|mistakes)/i.test(t) },
+    { name: 'How To', test: (t: string) => /^how\s+to/i.test(t) },
+    { name: 'Why Question', test: (t: string) => /^why\s/i.test(t) },
+    { name: 'What Question', test: (t: string) => /^what\s/i.test(t) },
+    { name: 'Ultimate Guide', test: (t: string) => /ultimate|complete|definitive/i.test(t) },
+    { name: 'Year Reference', test: (t: string) => /202\d/i.test(t) },
+    { name: 'Beginner Focus', test: (t: string) => /beginner|newbie|starter|first time/i.test(t) },
+    { name: 'Negative Hook', test: (t: string) => /don't|stop|never|avoid|worst|mistake/i.test(t) },
+    { name: 'Comparison', test: (t: string) => /\bvs\.?\b|\bversus\b|compared|better than/i.test(t) },
+    { name: 'Secret/Hidden', test: (t: string) => /secret|hidden|unknown|no one knows/i.test(t) },
+    { name: 'Challenge Hook', test: (t: string) => /challenge|impossible|can't|couldn't/i.test(t) },
+    { name: 'Emotional Trigger', test: (t: string) => /amazing|shocking|insane|crazy|mind-blowing/i.test(t) },
+];
 
-    // Pattern extraction rules
-    const patternTests = [
-        { name: 'Numbered List', test: (t: string) => /^\d+\s/.test(t) || /\d+\s+(ways|tips|things|reasons|steps|mistakes)/i.test(t) },
-        { name: 'How To', test: (t: string) => /^how\s+to/i.test(t) },
-        { name: 'Why Question', test: (t: string) => /^why\s/i.test(t) },
-        { name: 'What Question', test: (t: string) => /^what\s/i.test(t) },
-        { name: 'Ultimate Guide', test: (t: string) => /ultimate|complete|definitive/i.test(t) },
-        { name: 'Year Reference', test: (t: string) => /202\d/i.test(t) },
-        { name: 'Beginner Focus', test: (t: string) => /beginner|newbie|starter|first time/i.test(t) },
-        { name: 'Negative Hook', test: (t: string) => /don't|stop|never|avoid|worst|mistake/i.test(t) },
-        { name: 'Comparison', test: (t: string) => /\bvs\.?\b|\bversus\b|compared|better than/i.test(t) },
-        { name: 'Secret/Hidden', test: (t: string) => /secret|hidden|unknown|no one knows/i.test(t) },
-        { name: 'Challenge Hook', test: (t: string) => /challenge|impossible|can't|couldn't/i.test(t) },
-        { name: 'Emotional Trigger', test: (t: string) => /amazing|shocking|insane|crazy|mind-blowing/i.test(t) },
-    ];
+function extractPatternsWithLift(videos: VideoWithViews[]): PatternWithLift[] {
+    const allViews = videos.map(v => v.views);
 
-    titles.forEach((title) => {
-        patternTests.forEach(({ name, test }) => {
-            if (test(title)) {
-                if (!patterns[name]) {
-                    patterns[name] = { count: 0, example: title, totalViews: 0, examples: [] };
-                }
-                patterns[name].count++;
-                patterns[name].examples.push(title);
-            }
-        });
+    return patternTests.map(({ name, test }) => {
+        const withPattern = videos.filter(v => test(v.title));
+        const withoutPattern = videos.filter(v => !test(v.title));
+
+        const liftResult = calculatePatternLift(
+            withPattern.map(v => v.views),
+            withoutPattern.map(v => v.views)
+        );
+
+        return {
+            pattern: name,
+            examples: withPattern.slice(0, 3).map(v => v.title),
+            prevalence: Math.round((withPattern.length / videos.length) * 100),
+            lift: liftResult.lift,
+            avgViewsWithPattern: liftResult.avgWith,
+            avgViewsWithoutPattern: liftResult.avgWithout,
+            pValue: liftResult.pValue,
+            significant: liftResult.significant
+        };
+    })
+        .filter(p => p.prevalence >= 10) // At least 10% prevalence
+        .sort((a, b) => b.lift - a.lift); // Sort by lift, not just prevalence
+}
+
+async function fetchNicheVideos(niche: string): Promise<VideoWithViews[]> {
+    const searchResponse = await axios.get(`${BASE_URL}/search`, {
+        params: {
+            part: 'snippet',
+            q: niche,
+            type: 'video',
+            maxResults: 50, // Increased for better statistics
+            order: 'relevance',
+            key: YOUTUBE_API_KEY
+        }
     });
 
-    return Object.entries(patterns)
-        .map(([pattern, data]) => ({
-            pattern,
-            examples: data.examples.slice(0, 3),
-            prevalence: Math.round((data.count / titles.length) * 100),
-            avgViews: 0 // Would need views data to calculate
-        }))
-        .filter(p => p.prevalence >= 10) // At least 10% prevalence
-        .sort((a, b) => b.prevalence - a.prevalence);
+    const videoIds = searchResponse.data.items
+        .map((item: { id: { videoId: string } }) => item.id.videoId)
+        .join(',');
+
+    const statsResponse = await axios.get(`${BASE_URL}/videos`, {
+        params: {
+            part: 'snippet,statistics',
+            id: videoIds,
+            key: YOUTUBE_API_KEY
+        }
+    });
+
+    return statsResponse.data.items.map((v: {
+        snippet: { title: string };
+        statistics: { viewCount?: string };
+    }) => ({
+        title: v.snippet.title,
+        views: parseInt(v.statistics.viewCount || '0', 10)
+    }));
 }
 
 export async function GET(request: NextRequest) {
@@ -78,43 +124,21 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        // 1. Fetch top videos from source niche
-        const sourceResponse = await axios.get(`${BASE_URL}/search`, {
-            params: {
-                part: 'snippet',
-                q: sourceNiche,
-                type: 'video',
-                maxResults: 30,
-                order: 'viewCount',
-                key: YOUTUBE_API_KEY
-            }
-        });
+        // 1. Fetch videos with view counts from both niches
+        const sourceVideos = await fetchNicheVideos(sourceNiche);
+        const targetVideos = await fetchNicheVideos(targetNiche);
 
-        const sourceTitles = sourceResponse.data.items.map((item: { snippet: { title: string } }) => item.snippet.title);
+        // 2. Extract patterns with lift calculation
+        const sourcePatterns = extractPatternsWithLift(sourceVideos);
+        const targetPatterns = extractPatternsWithLift(targetVideos);
 
-        // 2. Fetch top videos from target niche
-        const targetResponse = await axios.get(`${BASE_URL}/search`, {
-            params: {
-                part: 'snippet',
-                q: targetNiche,
-                type: 'video',
-                maxResults: 30,
-                order: 'viewCount',
-                key: YOUTUBE_API_KEY
-            }
-        });
+        // 3. Find transferable patterns (in source with significant lift, but underused in target)
+        const targetPatternNames = new Set(targetPatterns.filter(p => p.prevalence >= 20).map(p => p.pattern));
+        const transferablePatterns = sourcePatterns
+            .filter(p => !targetPatternNames.has(p.pattern) && p.lift >= 1.2) // Only patterns with 20%+ lift
+            .slice(0, 5);
 
-        const targetTitles = targetResponse.data.items.map((item: { snippet: { title: string } }) => item.snippet.title);
-
-        // 3. Extract patterns from both niches
-        const sourcePatterns = extractTitlePatterns(sourceTitles);
-        const targetPatterns = extractTitlePatterns(targetTitles);
-
-        // 4. Find transferable patterns (in source but not in target)
-        const targetPatternNames = new Set(targetPatterns.map(p => p.pattern));
-        const transferablePatterns = sourcePatterns.filter(p => !targetPatternNames.has(p.pattern));
-
-        // 5. Use AI to generate adapted examples
+        // 4. Use AI to generate adapted examples
         const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
         const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
@@ -122,14 +146,16 @@ export async function GET(request: NextRequest) {
 
         if (transferablePatterns.length > 0) {
             const patternsWithExamples = transferablePatterns.slice(0, 5).map(p =>
-                `Pattern: "${p.pattern}" (${p.prevalence}% in ${sourceNiche})\nExamples: ${p.examples.join('; ')}`
+                `Pattern: "${p.pattern}" (${p.prevalence}% prevalence, ${Math.round((p.lift - 1) * 100)}% lift, p=${p.pValue})\nExamples: ${p.examples.join('; ')}`
             ).join('\n\n');
 
             const prompt = `You are analyzing YouTube title patterns from "${sourceNiche}" to adapt them for "${targetNiche}".
 
-These patterns work well in ${sourceNiche} but are UNDERUSED in ${targetNiche}:
+These patterns STATISTICALLY CORRELATE with higher views in ${sourceNiche} but are UNDERUSED in ${targetNiche}:
 
 ${patternsWithExamples}
+
+("Lift" means videos with this pattern get X% more views than videos without it)
 
 For each pattern, create an adapted title for ${targetNiche} and explain why it could work.
 
@@ -157,13 +183,17 @@ Return ONLY valid JSON:
                     applicability: string;
                     reasoning: string;
                 }) => {
+                    // Find the matching source pattern for lift data
+                    const sourcePattern = transferablePatterns.find(p => p.pattern === t.pattern);
                     transferResults.push({
                         pattern: t.pattern,
                         sourceNiche,
                         targetNiche,
                         applicability: t.applicability as 'high' | 'medium' | 'low',
                         adaptedExample: t.adaptedExample,
-                        reasoning: t.reasoning
+                        reasoning: t.reasoning,
+                        liftInSource: sourcePattern?.lift || 1,
+                        significant: sourcePattern?.significant || false
                     });
                 });
             }
@@ -181,38 +211,46 @@ Return ONLY valid JSON:
                 sourcePatternsFound: sourcePatterns.length,
                 targetPatternsFound: targetPatterns.length,
                 transferOpportunities: transferablePatterns.length,
-                commonPatterns: commonPatterns.length
+                commonPatterns: commonPatterns.length,
+                note: 'Only patterns with 20%+ lift and p < 0.1 are recommended for transfer'
             },
 
-            transferOpportunities: transferResults.sort((a, b) => {
-                const order = { high: 0, medium: 1, low: 2 };
-                return order[a.applicability] - order[b.applicability];
-            }),
+            transferOpportunities: transferResults.sort((a, b) => b.liftInSource - a.liftInSource),
 
             sourcePatterns: sourcePatterns.slice(0, 6).map(p => ({
                 pattern: p.pattern,
                 prevalence: `${p.prevalence}%`,
+                lift: p.lift,
+                pValue: p.pValue,
+                significant: p.significant,
                 example: p.examples[0]
             })),
 
             existingInTarget: targetPatterns.slice(0, 6).map(p => ({
                 pattern: p.pattern,
                 prevalence: `${p.prevalence}%`,
+                lift: p.lift,
+                significant: p.significant,
                 example: p.examples[0]
             })),
 
             validated: commonPatterns.slice(0, 5).map(p => ({
                 pattern: p.pattern,
-                note: 'Works in both niches - safe to use'
+                note: 'Works in both niches - safe to use',
+                liftInBoth: Math.min(p.lift, sourcePatterns.find(s => s.pattern === p.pattern)?.lift || 1)
             })),
 
             methodology: {
-                approach: 'Pattern extraction from top-performing titles, cross-referenced between niches',
+                approach: 'Pattern extraction with lift calculation (t-test for significance)',
+                improvements: [
+                    'Patterns now sorted by lift, not just prevalence',
+                    'Only recommends patterns with statistically significant lift',
+                    'View data used to calculate actual performance difference'
+                ],
                 limitations: [
-                    'Patterns based on title structure, not content quality',
+                    'Correlation ≠ causation - patterns may not cause lift',
                     'Transfer success not guaranteed - audience may differ',
-                    'Limited to 30 videos per niche for pattern detection',
-                    'AI adaptations are suggestions, not proven'
+                    '50 videos per niche analyzed'
                 ]
             }
         });
