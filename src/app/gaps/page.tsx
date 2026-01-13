@@ -5,12 +5,12 @@ import axios from 'axios';
 import {
     Search,
     ArrowLeft,
-    TrendingUp,
     ExternalLink,
-    BarChart3
+    BarChart3,
+    Info
 } from 'lucide-react';
 
-interface Opportunity {
+interface TopicAnalysis {
     topic: string;
     demand: {
         avgViews: number;
@@ -21,32 +21,40 @@ interface Opportunity {
     supply: {
         videoCount: number;
         qualityVideoCount: number;
-        channelConcentration: number;
+        dominantChannelSize: string;
         avgAge: number;
     };
-    opportunityScore: number;
-    opportunityGrade: string;
-    arbitrageSignal: string;
+    gapIndicator: number;
+    signalStrength: string;
+    interpretation: string;
     sampleVideos: {
         title: string;
         views: number;
         velocity: number;
         thumbnail: string;
         id: string;
+        channelSubs: number;
     }[];
 }
 
 interface GapResult {
     seed: string;
     marketOverview: {
-        totalAnalyzed: number;
-        averageOpportunity: number;
-        bestOpportunity: number;
-        strongOpportunities: number;
+        topicsAnalyzed: number;
+        avgGapIndicator: number;
+        strongSignals: number;
+        moderateSignals: number;
     };
-    opportunities: Opportunity[];
-    topPicks: Opportunity[];
-    investorInsight: string;
+    opportunities: TopicAnalysis[];
+    topPicks: TopicAnalysis[];
+    methodology: {
+        gapIndicator: string;
+        supplyFloor: string;
+        signalStrength: Record<string, string>;
+        channelSizeContext: string;
+        limitations: string[];
+    };
+    insight: string;
 }
 
 const regions = [
@@ -63,14 +71,16 @@ function formatNumber(num: number): string {
     return num.toString();
 }
 
-function getGradeColor(grade: string): string {
-    switch (grade) {
-        case 'A': return 'text-emerald-400';
-        case 'B': return 'text-emerald-500';
-        case 'C': return 'text-amber-400';
-        case 'D': return 'text-amber-500';
-        default: return 'text-neutral-500';
-    }
+function getStrengthStyle(strength: string): string {
+    if (strength === 'strong') return 'bg-emerald-950/30 border-emerald-800/50';
+    if (strength === 'moderate') return 'bg-amber-950/30 border-amber-800/50';
+    return 'bg-neutral-900 border-neutral-800';
+}
+
+function getStrengthColor(strength: string): string {
+    if (strength === 'strong') return 'text-emerald-400';
+    if (strength === 'moderate') return 'text-amber-400';
+    return 'text-neutral-500';
 }
 
 export default function GapsPage() {
@@ -106,7 +116,7 @@ export default function GapsPage() {
                         <div className="w-8 h-8 rounded-lg bg-neutral-800 flex items-center justify-center">
                             <BarChart3 className="w-4 h-4 text-neutral-400" strokeWidth={1.5} />
                         </div>
-                        <span className="font-medium">Content Gaps</span>
+                        <span className="font-medium">Gap Analysis</span>
                     </div>
                     <a href="/" className="flex items-center gap-2 text-sm text-neutral-500 hover:text-white transition-colors">
                         <ArrowLeft className="w-4 h-4" strokeWidth={1.5} />
@@ -118,10 +128,10 @@ export default function GapsPage() {
             {/* Hero */}
             <div className="max-w-3xl mx-auto px-6 pt-16 pb-12 text-center">
                 <h1 className="text-3xl font-light text-white tracking-tight mb-4">
-                    Find undervalued opportunities
+                    Explore market gaps
                 </h1>
                 <p className="text-neutral-500 mb-10">
-                    Topics where demand exceeds quality supply
+                    Signal strength based on available data. Not a guarantee.
                 </p>
 
                 {/* Search */}
@@ -168,27 +178,35 @@ export default function GapsPage() {
             {result && !loading && (
                 <div className="max-w-5xl mx-auto px-6 pb-16 space-y-8">
 
+                    {/* Methodology Disclaimer */}
+                    <div className="flex items-start gap-3 p-4 bg-neutral-900 rounded-xl border border-neutral-800">
+                        <Info className="w-4 h-4 text-neutral-500 shrink-0 mt-0.5" strokeWidth={1.5} />
+                        <div className="text-sm text-neutral-400">
+                            {result.methodology.gapIndicator}. {result.methodology.supplyFloor}
+                        </div>
+                    </div>
+
                     {/* Market Overview */}
                     <div className="bg-neutral-900 rounded-xl p-6 border border-neutral-800">
                         <p className="text-sm text-neutral-500 uppercase tracking-wide mb-4">Market Overview</p>
-                        <p className="text-neutral-300 mb-6">{result.investorInsight}</p>
+                        <p className="text-neutral-300 mb-6">{result.insight}</p>
 
                         <div className="grid grid-cols-4 gap-6">
                             <div>
-                                <p className="text-3xl font-light text-white">{result.marketOverview.totalAnalyzed}</p>
+                                <p className="text-3xl font-light text-white">{result.marketOverview.topicsAnalyzed}</p>
                                 <p className="text-sm text-neutral-500">topics analyzed</p>
                             </div>
                             <div>
-                                <p className="text-3xl font-light text-white">{result.marketOverview.averageOpportunity}</p>
-                                <p className="text-sm text-neutral-500">avg opportunity</p>
+                                <p className="text-3xl font-light text-white">{result.marketOverview.avgGapIndicator}</p>
+                                <p className="text-sm text-neutral-500">avg gap indicator</p>
                             </div>
                             <div>
-                                <p className="text-3xl font-light text-emerald-400">{result.marketOverview.bestOpportunity}</p>
-                                <p className="text-sm text-neutral-500">best score</p>
+                                <p className="text-3xl font-light text-emerald-400">{result.marketOverview.strongSignals}</p>
+                                <p className="text-sm text-neutral-500">strong signals</p>
                             </div>
                             <div>
-                                <p className="text-3xl font-light text-emerald-400">{result.marketOverview.strongOpportunities}</p>
-                                <p className="text-sm text-neutral-500">strong picks</p>
+                                <p className="text-3xl font-light text-amber-400">{result.marketOverview.moderateSignals}</p>
+                                <p className="text-sm text-neutral-500">moderate signals</p>
                             </div>
                         </div>
                     </div>
@@ -196,18 +214,18 @@ export default function GapsPage() {
                     {/* Top Picks */}
                     {result.topPicks.length > 0 && (
                         <div>
-                            <p className="text-sm text-neutral-500 uppercase tracking-wide mb-4">Top picks</p>
+                            <p className="text-sm text-neutral-500 uppercase tracking-wide mb-4">Strong signals</p>
                             <div className="grid md:grid-cols-3 gap-4">
                                 {result.topPicks.map((opp, i) => (
-                                    <div key={i} className="bg-emerald-950/30 rounded-xl p-5 border border-emerald-800/50">
+                                    <div key={i} className={`rounded-xl p-5 border ${getStrengthStyle(opp.signalStrength)}`}>
                                         <div className="flex items-start justify-between mb-3">
-                                            <span className={`text-2xl font-light ${getGradeColor(opp.opportunityGrade)}`}>
-                                                {opp.opportunityGrade}
+                                            <span className={`text-sm font-medium uppercase ${getStrengthColor(opp.signalStrength)}`}>
+                                                {opp.signalStrength}
                                             </span>
-                                            <span className="text-2xl font-light text-emerald-400">{opp.opportunityScore}</span>
+                                            <span className="text-2xl font-light text-white">{opp.gapIndicator}</span>
                                         </div>
                                         <p className="text-white font-medium mb-2">{opp.topic}</p>
-                                        <p className="text-sm text-neutral-400 mb-4">{opp.arbitrageSignal}</p>
+                                        <p className="text-sm text-neutral-400 mb-4">{opp.interpretation}</p>
 
                                         <div className="grid grid-cols-2 gap-3">
                                             <div className="bg-neutral-900/50 rounded-lg p-3">
@@ -215,8 +233,8 @@ export default function GapsPage() {
                                                 <p className="text-xs text-neutral-500">avg views</p>
                                             </div>
                                             <div className="bg-neutral-900/50 rounded-lg p-3">
-                                                <p className="text-amber-400 font-medium">{opp.supply.qualityVideoCount}</p>
-                                                <p className="text-xs text-neutral-500">quality videos</p>
+                                                <p className="text-amber-400 font-medium">{opp.supply.dominantChannelSize}</p>
+                                                <p className="text-xs text-neutral-500">channel size</p>
                                             </div>
                                         </div>
                                     </div>
@@ -227,47 +245,44 @@ export default function GapsPage() {
 
                     {/* All Opportunities */}
                     <div>
-                        <p className="text-sm text-neutral-500 uppercase tracking-wide mb-4">All opportunities</p>
+                        <p className="text-sm text-neutral-500 uppercase tracking-wide mb-4">All topics analyzed</p>
                         <div className="space-y-3">
                             {result.opportunities.map((opp, i) => (
                                 <div
                                     key={i}
-                                    className={`rounded-xl p-5 border ${opp.opportunityScore >= 65 ? 'bg-neutral-900 border-emerald-800/30' : 'bg-neutral-900 border-neutral-800'
-                                        }`}
+                                    className={`rounded-xl p-5 border ${getStrengthStyle(opp.signalStrength)}`}
                                 >
                                     <div className="flex items-center gap-6">
-                                        {/* Grade */}
-                                        <span className={`text-2xl font-light w-8 ${getGradeColor(opp.opportunityGrade)}`}>
-                                            {opp.opportunityGrade}
+                                        {/* Signal Strength */}
+                                        <span className={`text-sm font-medium uppercase w-20 ${getStrengthColor(opp.signalStrength)}`}>
+                                            {opp.signalStrength}
                                         </span>
 
-                                        {/* Topic & Signal */}
+                                        {/* Topic & Interpretation */}
                                         <div className="flex-1">
                                             <p className="text-white font-medium">{opp.topic}</p>
-                                            <p className="text-sm text-neutral-500">{opp.arbitrageSignal}</p>
+                                            <p className="text-sm text-neutral-500">{opp.interpretation}</p>
                                         </div>
 
                                         {/* Metrics */}
                                         <div className="hidden md:flex gap-8 text-center">
                                             <div>
                                                 <p className="text-white">{formatNumber(opp.demand.avgViews)}</p>
-                                                <p className="text-xs text-neutral-500">demand</p>
+                                                <p className="text-xs text-neutral-500">avg views</p>
                                             </div>
                                             <div>
                                                 <p className="text-white">{opp.supply.qualityVideoCount}/{opp.supply.videoCount}</p>
                                                 <p className="text-xs text-neutral-500">quality/supply</p>
                                             </div>
                                             <div>
-                                                <p className="text-white">{opp.demand.searchInterest}</p>
-                                                <p className="text-xs text-neutral-500">interest</p>
+                                                <p className="text-white">{opp.supply.dominantChannelSize}</p>
+                                                <p className="text-xs text-neutral-500">ch. size</p>
                                             </div>
                                         </div>
 
-                                        {/* Score */}
-                                        <span className={`text-2xl font-light ${opp.opportunityScore >= 65 ? 'text-emerald-400' :
-                                                opp.opportunityScore >= 50 ? 'text-amber-400' : 'text-neutral-500'
-                                            }`}>
-                                            {opp.opportunityScore}
+                                        {/* Gap Indicator */}
+                                        <span className={`text-2xl font-light ${getStrengthColor(opp.signalStrength)}`}>
+                                            {opp.gapIndicator}
                                         </span>
                                     </div>
 
@@ -305,6 +320,16 @@ export default function GapsPage() {
                                 </div>
                             ))}
                         </div>
+                    </div>
+
+                    {/* Limitations */}
+                    <div className="bg-neutral-900/50 rounded-2xl p-6">
+                        <p className="text-sm font-medium text-neutral-500 mb-3">Limitations</p>
+                        <ul className="text-sm text-neutral-400 space-y-2">
+                            {result.methodology.limitations.map((limitation, i) => (
+                                <li key={i}>• {limitation}</li>
+                            ))}
+                        </ul>
                     </div>
 
                     {/* New Search */}

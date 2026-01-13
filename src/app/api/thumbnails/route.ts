@@ -22,11 +22,12 @@ interface ThumbnailAnalysis {
     };
 }
 
-interface NichePattern {
-    pattern: string;
+interface NicheConvention {
+    convention: string;
     prevalence: number;
-    correlation: string;
-    recommendation: string;
+    sampleSize: number;
+    confidence: 'low' | 'medium' | 'high';
+    observation: string;
 }
 
 async function analyzeThumbnail(thumbnailUrl: string, title: string): Promise<{
@@ -54,7 +55,6 @@ async function analyzeThumbnail(thumbnailUrl: string, title: string): Promise<{
         const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
         const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
-        // Fetch thumbnail image
         const imageResponse = await axios.get(thumbnailUrl, { responseType: 'arraybuffer' });
         const imageBase64 = Buffer.from(imageResponse.data, 'binary').toString('base64');
 
@@ -105,7 +105,6 @@ Video title for context: "${title}"`;
 export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const niche = searchParams.get('niche');
-    const thumbnailUrl = searchParams.get('thumbnail'); // Optional: user's thumbnail to score
 
     if (!niche) {
         return NextResponse.json({ error: 'Missing "niche" parameter' }, { status: 400 });
@@ -116,20 +115,20 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        // 1. Get top-performing videos in niche
+        // 1. Get top-performing videos in niche (INCREASED sample)
         const searchResponse = await axios.get(`${BASE_URL}/search`, {
             params: {
                 part: 'snippet',
                 q: niche,
                 type: 'video',
-                maxResults: 20,
+                maxResults: 30, // Increased from 20
                 order: 'viewCount',
                 key: YOUTUBE_API_KEY
             }
         });
 
         const items = searchResponse.data.items || [];
-        if (items.length < 5) {
+        if (items.length < 10) {
             return NextResponse.json({ error: 'Not enough videos to analyze' }, { status: 404 });
         }
 
@@ -144,8 +143,8 @@ export async function GET(request: NextRequest) {
             }
         });
 
-        // 3. Analyze top 8 thumbnails (to manage API calls)
-        const videosToAnalyze = statsResponse.data.items.slice(0, 8);
+        // 3. Analyze top 15 thumbnails (increased from 8)
+        const videosToAnalyze = statsResponse.data.items.slice(0, 15);
         const analyses: ThumbnailAnalysis[] = [];
 
         for (const video of videosToAnalyze) {
@@ -161,108 +160,118 @@ export async function GET(request: NextRequest) {
                 analysis
             });
 
-            // Delay between API calls
             await new Promise(resolve => setTimeout(resolve, 200));
         }
 
-        // 4. Identify patterns correlating with high views
-        const patterns: NichePattern[] = [];
+        // 4. Identify CONVENTIONS (not "what works")
+        const conventions: NicheConvention[] = [];
         const totalAnalyzed = analyses.length;
+
+        // Calculate confidence based on sample size
+        const getConfidence = (count: number): 'low' | 'medium' | 'high' => {
+            if (totalAnalyzed >= 12) return count >= 8 ? 'high' : count >= 5 ? 'medium' : 'low';
+            if (totalAnalyzed >= 8) return count >= 5 ? 'medium' : 'low';
+            return 'low';
+        };
 
         // Face presence
         const faceCount = analyses.filter(a => a.analysis.hasFace).length;
         const facePrevalence = Math.round((faceCount / totalAnalyzed) * 100);
-        patterns.push({
-            pattern: 'Face in thumbnail',
+        conventions.push({
+            convention: 'Face in thumbnail',
             prevalence: facePrevalence,
-            correlation: facePrevalence >= 60 ? 'Strong' : facePrevalence >= 40 ? 'Moderate' : 'Weak',
-            recommendation: facePrevalence >= 60
-                ? 'Include a face - top performers in this niche use faces'
-                : 'Face optional in this niche'
+            sampleSize: totalAnalyzed,
+            confidence: getConfidence(faceCount),
+            observation: facePrevalence >= 70
+                ? `${facePrevalence}% of top videos include faces. This appears to be a niche norm.`
+                : facePrevalence >= 40
+                    ? `${facePrevalence}% include faces. Mixed convention in this niche.`
+                    : `Only ${facePrevalence}% include faces. Non-face thumbnails are common here.`
         });
 
         // Text presence
         const textCount = analyses.filter(a => a.analysis.hasText).length;
         const textPrevalence = Math.round((textCount / totalAnalyzed) * 100);
-        patterns.push({
-            pattern: 'Text overlay',
+        conventions.push({
+            convention: 'Text overlay',
             prevalence: textPrevalence,
-            correlation: textPrevalence >= 60 ? 'Strong' : textPrevalence >= 40 ? 'Moderate' : 'Weak',
-            recommendation: textPrevalence >= 60
-                ? 'Add text overlay - standard in this niche'
-                : 'Text optional - let visuals speak'
+            sampleSize: totalAnalyzed,
+            confidence: getConfidence(textCount),
+            observation: textPrevalence >= 70
+                ? `${textPrevalence}% use text overlays. Standard practice in this niche.`
+                : textPrevalence >= 40
+                    ? `${textPrevalence}% use text. Optional in this niche.`
+                    : `Only ${textPrevalence}% use text. Visual-first thumbnails common here.`
         });
 
         // High contrast
         const highContrastCount = analyses.filter(a => a.analysis.contrast === 'high').length;
         const contrastPrevalence = Math.round((highContrastCount / totalAnalyzed) * 100);
-        patterns.push({
-            pattern: 'High contrast',
+        conventions.push({
+            convention: 'High contrast',
             prevalence: contrastPrevalence,
-            correlation: contrastPrevalence >= 50 ? 'Strong' : 'Moderate',
-            recommendation: 'High contrast helps thumbnails pop in feeds'
+            sampleSize: totalAnalyzed,
+            confidence: getConfidence(highContrastCount),
+            observation: `${contrastPrevalence}% use high contrast. ${contrastPrevalence >= 50 ? 'Common' : 'Less common'} in this niche.`
         });
 
         // Emotions (if faces present)
-        const emotionCounts: Record<string, number> = {};
-        analyses.forEach(a => {
-            if (a.analysis.emotionIfFace && a.analysis.emotionIfFace !== 'n/a') {
-                emotionCounts[a.analysis.emotionIfFace] = (emotionCounts[a.analysis.emotionIfFace] || 0) + 1;
-            }
-        });
-        const topEmotion = Object.entries(emotionCounts).sort((a, b) => b[1] - a[1])[0];
-        if (topEmotion) {
-            patterns.push({
-                pattern: `${topEmotion[0]} expression`,
-                prevalence: Math.round((topEmotion[1] / faceCount) * 100),
-                correlation: 'Observed in top performers',
-                recommendation: `When using faces, ${topEmotion[0]} expressions work well in this niche`
+        if (faceCount >= 3) {
+            const emotionCounts: Record<string, number> = {};
+            analyses.forEach(a => {
+                if (a.analysis.emotionIfFace && a.analysis.emotionIfFace !== 'n/a') {
+                    emotionCounts[a.analysis.emotionIfFace] = (emotionCounts[a.analysis.emotionIfFace] || 0) + 1;
+                }
             });
-        }
-
-        // 5. Score user's thumbnail if provided
-        let userThumbnailScore = null;
-        if (thumbnailUrl) {
-            const userAnalysis = await analyzeThumbnail(thumbnailUrl, 'User thumbnail');
-
-            let score = 50; // Base score
-
-            // Compare to niche patterns
-            if (facePrevalence >= 60 && userAnalysis.hasFace) score += 15;
-            if (facePrevalence < 40 && !userAnalysis.hasFace) score += 5;
-
-            if (textPrevalence >= 60 && userAnalysis.hasText) score += 10;
-            if (textPrevalence < 40 && !userAnalysis.hasText) score += 5;
-
-            if (userAnalysis.contrast === 'high') score += 15;
-            if (userAnalysis.contrast === 'medium') score += 5;
-
-            score = Math.min(100, score);
-
-            userThumbnailScore = {
-                score,
-                analysis: userAnalysis,
-                feedback: generateFeedback(userAnalysis, patterns)
-            };
+            const topEmotion = Object.entries(emotionCounts).sort((a, b) => b[1] - a[1])[0];
+            if (topEmotion && topEmotion[1] >= 2) {
+                const emotionPrevalence = Math.round((topEmotion[1] / faceCount) * 100);
+                conventions.push({
+                    convention: `${topEmotion[0].charAt(0).toUpperCase() + topEmotion[0].slice(1)} expression`,
+                    prevalence: emotionPrevalence,
+                    sampleSize: faceCount,
+                    confidence: faceCount >= 5 ? 'medium' : 'low',
+                    observation: `Of thumbnails with faces, ${emotionPrevalence}% show ${topEmotion[0]} expressions.`
+                });
+            }
         }
 
         return NextResponse.json({
             niche,
             thumbnailsAnalyzed: analyses.length,
-            patterns,
-            topPerformers: analyses.slice(0, 5).map(a => ({
+
+            // REFRAMED: "Niche Conventions" not "What Works"
+            conventions,
+
+            topPerformers: analyses.slice(0, 6).map(a => ({
                 title: a.title,
                 views: a.views,
                 thumbnailUrl: a.thumbnailUrl,
-                keyFeatures: [
+                features: [
                     a.analysis.hasFace ? 'Has face' : 'No face',
                     a.analysis.hasText ? `Text: ${a.analysis.textAmount}` : 'No text',
                     `${a.analysis.contrast} contrast`,
                     a.analysis.emotionIfFace !== 'n/a' ? a.analysis.emotionIfFace : null
                 ].filter(Boolean)
             })),
-            userThumbnailScore,
-            insight: generateInsight(patterns)
+
+            // HONEST methodology
+            methodology: {
+                approach: 'Analyzes thumbnails from top-performing videos to identify common patterns',
+                sampleSize: analyses.length,
+                limitations: [
+                    'We observe CORRELATION, not CAUSATION',
+                    'High views may be due to topic, title, algorithm, or existing audience - not just thumbnail',
+                    'We do not have CTR data - cannot prove thumbnails drove clicks',
+                    'Copying conventions does not guarantee results'
+                ],
+                interpretation: 'These are patterns OBSERVED in successful videos, not PROVEN to cause success'
+            },
+
+            insight: `Analyzed ${analyses.length} top-performing thumbnails. ${conventions.filter(c => c.confidence === 'high').length > 0
+                    ? `High-confidence conventions: ${conventions.filter(c => c.confidence === 'high').map(c => c.convention.toLowerCase()).join(', ')}.`
+                    : 'No high-confidence conventions detected. This niche may have varied visual styles.'
+                }`
         });
 
     } catch (error) {
@@ -273,46 +282,4 @@ export async function GET(request: NextRequest) {
         }
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
-}
-
-function generateFeedback(
-    userAnalysis: { hasFace: boolean; hasText: boolean; contrast: string; textAmount: string },
-    patterns: NichePattern[]
-): string[] {
-    const feedback: string[] = [];
-
-    const facePattern = patterns.find(p => p.pattern === 'Face in thumbnail');
-    if (facePattern && facePattern.prevalence >= 60 && !userAnalysis.hasFace) {
-        feedback.push(`Consider adding a face - ${facePattern.prevalence}% of top performers use faces`);
-    }
-
-    const textPattern = patterns.find(p => p.pattern === 'Text overlay');
-    if (textPattern && textPattern.prevalence >= 60 && !userAnalysis.hasText) {
-        feedback.push(`Add text overlay - standard in this niche (${textPattern.prevalence}%)`);
-    }
-
-    if (userAnalysis.contrast === 'low') {
-        feedback.push('Increase contrast - your thumbnail may get lost in feeds');
-    }
-
-    if (userAnalysis.textAmount === 'heavy') {
-        feedback.push('Reduce text amount - too much text can hurt readability at small sizes');
-    }
-
-    if (feedback.length === 0) {
-        feedback.push('Your thumbnail aligns well with niche patterns!');
-    }
-
-    return feedback;
-}
-
-function generateInsight(patterns: NichePattern[]): string {
-    const strongPatterns = patterns.filter(p => p.correlation === 'Strong');
-
-    if (strongPatterns.length >= 2) {
-        return `Strong patterns detected: ${strongPatterns.map(p => p.pattern.toLowerCase()).join(', ')}. Match these for best results.`;
-    } else if (strongPatterns.length === 1) {
-        return `Key pattern: ${strongPatterns[0].pattern.toLowerCase()} is standard in this niche.`;
-    }
-    return 'Thumbnail patterns vary in this niche - more creative freedom available.';
 }

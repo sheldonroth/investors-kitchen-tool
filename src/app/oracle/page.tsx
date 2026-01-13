@@ -11,7 +11,7 @@ import {
     Image,
     ArrowLeft,
     ExternalLink,
-    ChevronRight
+    Info
 } from 'lucide-react';
 
 type OracleTool = 'failures' | 'blue-ocean' | 'competitor-gaps' | 'momentum' | 'thumbnails';
@@ -28,9 +28,9 @@ interface ToolInfo {
 const TOOLS: ToolInfo[] = [
     {
         id: 'failures',
-        name: 'Failure Predictor',
+        name: 'Pattern Analysis',
         icon: <AlertTriangle className="w-5 h-5" strokeWidth={1.5} />,
-        description: 'Patterns that kill videos',
+        description: 'Title patterns correlated with underperformance',
         inputLabel: 'Niche',
         inputPlaceholder: 'e.g., cooking tutorials'
     },
@@ -38,15 +38,15 @@ const TOOLS: ToolInfo[] = [
         id: 'momentum',
         name: 'Momentum',
         icon: <Flame className="w-5 h-5" strokeWidth={1.5} />,
-        description: 'Topics spiking now',
+        description: 'Recent trend signals (3-7 day lag)',
         inputLabel: 'Topic',
         inputPlaceholder: 'e.g., personal finance'
     },
     {
         id: 'blue-ocean',
-        name: 'Blue Ocean',
+        name: 'Low Competition',
         icon: <Waves className="w-5 h-5" strokeWidth={1.5} />,
-        description: 'New content categories',
+        description: 'Format × topic experiments',
         inputLabel: 'Topic',
         inputPlaceholder: 'e.g., home repair'
     },
@@ -54,15 +54,15 @@ const TOOLS: ToolInfo[] = [
         id: 'competitor-gaps',
         name: 'Competitor Gaps',
         icon: <Target className="w-5 h-5" strokeWidth={1.5} />,
-        description: 'What they missed',
+        description: 'Content gaps in competitor channels',
         inputLabel: 'Niche',
         inputPlaceholder: 'e.g., fitness'
     },
     {
         id: 'thumbnails',
-        name: 'Thumbnails',
+        name: 'Thumbnail Conventions',
         icon: <Image className="w-5 h-5" strokeWidth={1.5} />,
-        description: 'What visuals work',
+        description: 'Observed patterns (not causation)',
         inputLabel: 'Niche',
         inputPlaceholder: 'e.g., tech reviews'
     }
@@ -101,6 +101,18 @@ export default function OraclePage() {
         }
     };
 
+    const getRiskColor = (risk: string) => {
+        if (risk === 'low') return 'text-emerald-400';
+        if (risk === 'medium') return 'text-amber-400';
+        return 'text-rose-400';
+    };
+
+    const getLevelColor = (level: string) => {
+        if (level === 'strong') return 'text-emerald-400 bg-emerald-950/30 border-emerald-800/50';
+        if (level === 'moderate') return 'text-amber-400 bg-amber-950/30 border-amber-800/50';
+        return 'text-neutral-400 bg-neutral-900 border-neutral-800';
+    };
+
     return (
         <div className="min-h-screen bg-neutral-950 text-white">
             {/* Navigation */}
@@ -110,7 +122,7 @@ export default function OraclePage() {
                         <div className="w-8 h-8 rounded-lg bg-neutral-800 flex items-center justify-center">
                             <Search className="w-4 h-4 text-neutral-400" strokeWidth={1.5} />
                         </div>
-                        <span className="font-medium">Oracle</span>
+                        <span className="font-medium">Research Tools</span>
                     </div>
                     <a href="/" className="flex items-center gap-2 text-sm text-neutral-500 hover:text-white transition-colors">
                         <ArrowLeft className="w-4 h-4" strokeWidth={1.5} />
@@ -127,8 +139,8 @@ export default function OraclePage() {
                             key={tool.id}
                             onClick={() => { setSelectedTool(tool.id); setResult(null); setQuery(''); }}
                             className={`p-4 rounded-xl border transition-all text-left ${selectedTool === tool.id
-                                    ? 'bg-neutral-900 border-neutral-700'
-                                    : 'bg-transparent border-neutral-800 hover:border-neutral-700'
+                                ? 'bg-neutral-900 border-neutral-700'
+                                : 'bg-transparent border-neutral-800 hover:border-neutral-700'
                                 }`}
                         >
                             <div className={`mb-3 ${selectedTool === tool.id ? 'text-white' : 'text-neutral-500'}`}>
@@ -175,6 +187,18 @@ export default function OraclePage() {
                 {/* Results */}
                 {result && !loading && (
                     <div className="space-y-6">
+                        {/* Methodology Disclosure */}
+                        {'methodology' in result && (
+                            <div className="flex items-start gap-3 p-4 bg-neutral-900 rounded-xl border border-neutral-800">
+                                <Info className="w-4 h-4 text-neutral-500 shrink-0 mt-0.5" strokeWidth={1.5} />
+                                <div className="text-sm text-neutral-400">
+                                    {String((result.methodology as Record<string, unknown>).disclaimer ||
+                                        (result.methodology as Record<string, unknown>).interpretation ||
+                                        'Based on available public data. Patterns observed, not proven.')}
+                                </div>
+                            </div>
+                        )}
+
                         {/* Insight */}
                         {'insight' in result && (
                             <div className="bg-neutral-900 rounded-xl p-6 border border-neutral-800">
@@ -185,15 +209,19 @@ export default function OraclePage() {
                         {/* Failure Predictor Results */}
                         {selectedTool === 'failures' && 'failurePatterns' in result && (
                             <div className="space-y-4">
-                                <p className="text-sm text-neutral-500 uppercase tracking-wide">Patterns to avoid</p>
+                                <p className="text-sm text-neutral-500 uppercase tracking-wide">Patterns correlated with underperformance</p>
                                 <div className="grid md:grid-cols-2 gap-4">
-                                    {(result.failurePatterns as Array<{ pattern: string; failureRate: number; advice: string; examples: string[] }>).map((pattern, i) => (
+                                    {(result.failurePatterns as Array<{ pattern: string; correlationRate: number; confidence: string; occurrences: number; advice: string }>).map((pattern, i) => (
                                         <div key={i} className="bg-neutral-900 rounded-xl p-5 border border-neutral-800">
                                             <div className="flex items-start justify-between mb-3">
                                                 <span className="text-white font-medium">{pattern.pattern}</span>
-                                                <span className="text-rose-400 text-sm">{pattern.failureRate}% fail</span>
+                                                <div className="text-right">
+                                                    <span className="text-rose-400 text-sm">{pattern.correlationRate}% correlated</span>
+                                                    <p className="text-xs text-neutral-600">{pattern.confidence} confidence</p>
+                                                </div>
                                             </div>
                                             <p className="text-sm text-neutral-400">{pattern.advice}</p>
+                                            <p className="text-xs text-neutral-600 mt-2">Based on {pattern.occurrences} videos</p>
                                         </div>
                                     ))}
                                 </div>
@@ -203,20 +231,19 @@ export default function OraclePage() {
                         {/* Momentum Results */}
                         {selectedTool === 'momentum' && 'opportunities' in result && (
                             <div className="space-y-4">
-                                <p className="text-sm text-neutral-500 uppercase tracking-wide">Momentum opportunities</p>
+                                <p className="text-sm text-neutral-500 uppercase tracking-wide">Trend signals (3-7 day data lag)</p>
                                 <div className="space-y-3">
-                                    {(result.opportunities as Array<{ topic: string; momentumScore: number; urgency: string; trendGrowth: string; recentVideosCount: number; reasoning: string }>).map((opp, i) => (
-                                        <div key={i} className={`rounded-xl p-5 border ${opp.momentumScore >= 70 ? 'bg-amber-950/30 border-amber-800/50' : 'bg-neutral-900 border-neutral-800'
-                                            }`}>
+                                    {(result.opportunities as Array<{ topic: string; opportunityLevel: string; trendSignal: string; recentVideosCount: number; reasoning: string; dataAge: string }>).map((opp, i) => (
+                                        <div key={i} className={`rounded-xl p-5 border ${getLevelColor(opp.opportunityLevel)}`}>
                                             <div className="flex items-start justify-between mb-2">
                                                 <div>
                                                     <span className="text-white font-medium">{opp.topic}</span>
-                                                    <span className="ml-3 text-sm text-emerald-400">{opp.trendGrowth}</span>
+                                                    <span className="ml-3 text-sm text-emerald-400">{opp.trendSignal}</span>
                                                 </div>
-                                                <span className="text-2xl font-light text-white">{opp.momentumScore}</span>
+                                                <span className="text-sm capitalize">{opp.opportunityLevel}</span>
                                             </div>
                                             <p className="text-sm text-neutral-400">{opp.reasoning}</p>
-                                            <p className="text-xs text-neutral-600 mt-2">{opp.recentVideosCount} videos in last 7 days</p>
+                                            <p className="text-xs text-neutral-600 mt-2">{opp.recentVideosCount} videos in last 7 days · {opp.dataAge}</p>
                                         </div>
                                     ))}
                                 </div>
@@ -224,23 +251,22 @@ export default function OraclePage() {
                         )}
 
                         {/* Blue Ocean Results */}
-                        {selectedTool === 'blue-ocean' && 'blueOceans' in result && (
+                        {selectedTool === 'blue-ocean' && 'combinations' in result && (
                             <div className="space-y-4">
-                                <p className="text-sm text-neutral-500 uppercase tracking-wide">New category opportunities</p>
+                                <p className="text-sm text-neutral-500 uppercase tracking-wide">Low-competition experiments (by risk level)</p>
                                 <div className="grid md:grid-cols-2 gap-4">
-                                    {(result.blueOceans as Array<{ combination: string; format: string; opportunityScore: number; supplyLevel: string; existingVideos: number; reasoning: string }>).map((bo, i) => (
-                                        <div key={i} className={`rounded-xl p-5 border ${bo.existingVideos === 0 ? 'bg-emerald-950/30 border-emerald-800/50' : 'bg-neutral-900 border-neutral-800'
-                                            }`}>
+                                    {(result.combinations as Array<{ combination: string; format: string; riskLevel: string; existingVideos: number; baseDemand: number; reasoning: string }>).map((combo, i) => (
+                                        <div key={i} className="bg-neutral-900 rounded-xl p-5 border border-neutral-800">
                                             <div className="flex items-start justify-between mb-2">
-                                                <span className="text-white font-medium">{bo.combination}</span>
-                                                <span className={`text-lg font-light ${bo.opportunityScore >= 70 ? 'text-emerald-400' : 'text-neutral-400'}`}>
-                                                    {bo.opportunityScore}
+                                                <span className="text-white font-medium">{combo.combination}</span>
+                                                <span className={`text-sm ${getRiskColor(combo.riskLevel)}`}>
+                                                    {combo.riskLevel} risk
                                                 </span>
                                             </div>
-                                            <p className="text-sm text-neutral-500 mb-2">
-                                                {bo.format} format · {bo.supplyLevel} supply
+                                            <p className="text-sm text-neutral-400">{combo.reasoning}</p>
+                                            <p className="text-xs text-neutral-600 mt-2">
+                                                {combo.existingVideos} existing videos · Base demand: {combo.baseDemand}/100
                                             </p>
-                                            <p className="text-sm text-neutral-400">{bo.reasoning}</p>
                                         </div>
                                     ))}
                                 </div>
@@ -255,7 +281,7 @@ export default function OraclePage() {
                                     <p className="text-white font-medium">{(result.analysis as { channelTitle: string }).channelTitle}</p>
                                     <p className="text-sm text-neutral-500">{formatNumber((result.analysis as { subscriberCount: number }).subscriberCount)} subscribers</p>
                                 </div>
-                                <p className="text-sm text-neutral-500 uppercase tracking-wide">Content gaps</p>
+                                <p className="text-sm text-neutral-500 uppercase tracking-wide">Potential content gaps</p>
                                 <div className="space-y-3">
                                     {((result.analysis as { contentGaps: Array<{ topic: string; gapScore: number; lastCoveredDaysAgo: number | null; searchDemand: number; reason: string }> }).contentGaps).map((gap, i) => (
                                         <div key={i} className="bg-neutral-900 rounded-xl p-5 border border-neutral-800">
@@ -273,20 +299,22 @@ export default function OraclePage() {
                         )}
 
                         {/* Thumbnail Results */}
-                        {selectedTool === 'thumbnails' && 'patterns' in result && (
+                        {selectedTool === 'thumbnails' && 'conventions' in result && (
                             <div className="space-y-6">
                                 <div>
-                                    <p className="text-sm text-neutral-500 uppercase tracking-wide mb-4">Patterns in this niche</p>
+                                    <p className="text-sm text-neutral-500 uppercase tracking-wide mb-4">Observed conventions (correlation only)</p>
                                     <div className="grid md:grid-cols-2 gap-4">
-                                        {(result.patterns as Array<{ pattern: string; prevalence: number; correlation: string; recommendation: string }>).map((pattern, i) => (
+                                        {(result.conventions as Array<{ convention: string; prevalence: number; confidence: string; sampleSize: number; observation: string }>).map((conv, i) => (
                                             <div key={i} className="bg-neutral-900 rounded-xl p-5 border border-neutral-800">
                                                 <div className="flex items-start justify-between mb-2">
-                                                    <span className="text-white font-medium">{pattern.pattern}</span>
-                                                    <span className={`text-sm ${pattern.correlation === 'Strong' ? 'text-emerald-400' : 'text-neutral-500'}`}>
-                                                        {pattern.prevalence}%
-                                                    </span>
+                                                    <span className="text-white font-medium">{conv.convention}</span>
+                                                    <div className="text-right">
+                                                        <span className="text-sm text-neutral-300">{conv.prevalence}%</span>
+                                                        <p className="text-xs text-neutral-600">{conv.confidence} confidence</p>
+                                                    </div>
                                                 </div>
-                                                <p className="text-sm text-neutral-400">{pattern.recommendation}</p>
+                                                <p className="text-sm text-neutral-400">{conv.observation}</p>
+                                                <p className="text-xs text-neutral-600 mt-2">Based on {conv.sampleSize} thumbnails</p>
                                             </div>
                                         ))}
                                     </div>
@@ -294,8 +322,8 @@ export default function OraclePage() {
 
                                 {'topPerformers' in result && (
                                     <div>
-                                        <p className="text-sm text-neutral-500 uppercase tracking-wide mb-4">Top performers</p>
-                                        <div className="grid grid-cols-5 gap-4">
+                                        <p className="text-sm text-neutral-500 uppercase tracking-wide mb-4">Reference thumbnails</p>
+                                        <div className="grid grid-cols-6 gap-3">
                                             {(result.topPerformers as Array<{ thumbnailUrl: string; title: string; views: number }>).map((video, i) => (
                                                 <div key={i} className="group">
                                                     <div className="aspect-video rounded-lg overflow-hidden bg-neutral-800 mb-2">

@@ -5,34 +5,31 @@ import googleTrends from 'google-trends-api';
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 const BASE_URL = 'https://www.googleapis.com/youtube/v3';
 
-// High-retention formats that work across niches (based on industry data)
-const PROVEN_FORMATS = [
-    { format: 'ASMR', avgRetention: 0.65, description: 'Relaxing, sensory content' },
-    { format: 'Timelapse', avgRetention: 0.70, description: 'Compressed time visuals' },
-    { format: 'POV', avgRetention: 0.60, description: 'First-person perspective' },
-    { format: 'Day in the life', avgRetention: 0.55, description: 'Personal documentary' },
-    { format: 'Challenge', avgRetention: 0.58, description: 'Goal-based entertainment' },
-    { format: 'Before and after', avgRetention: 0.62, description: 'Transformation content' },
-    { format: 'Speedrun', avgRetention: 0.55, description: 'Fastest completion' },
-    { format: 'Tier list', avgRetention: 0.50, description: 'Ranking content' },
-    { format: 'Reaction', avgRetention: 0.48, description: 'Response content' },
-    { format: 'Explained', avgRetention: 0.52, description: 'Educational breakdown' },
-    { format: 'vs', avgRetention: 0.55, description: 'Comparison content' },
-    { format: 'No talking', avgRetention: 0.60, description: 'Silent demonstration' },
-    { format: 'Documentary', avgRetention: 0.58, description: 'In-depth investigation' },
-    { format: 'Tour', avgRetention: 0.52, description: 'Walking through space' },
-    { format: 'Unboxing', avgRetention: 0.45, description: 'Product reveal' },
+// Proven formats based on observable patterns (NO FAKE RETENTION RATES)
+const CONTENT_FORMATS = [
+    { format: 'ASMR', description: 'Relaxing, sensory content' },
+    { format: 'Timelapse', description: 'Compressed time visuals' },
+    { format: 'POV', description: 'First-person perspective' },
+    { format: 'Day in the life', description: 'Personal documentary' },
+    { format: 'Challenge', description: 'Goal-based entertainment' },
+    { format: 'Before and after', description: 'Transformation content' },
+    { format: 'Speedrun', description: 'Fastest completion' },
+    { format: 'Tier list', description: 'Ranking content' },
+    { format: 'Explained', description: 'Educational breakdown' },
+    { format: 'vs', description: 'Comparison content' },
+    { format: 'No talking', description: 'Silent demonstration' },
+    { format: 'Tour', description: 'Walking through space' },
 ];
 
-interface BlueOcean {
+interface LowCompetitionCombination {
     combination: string;
     format: string;
     topic: string;
-    opportunityScore: number;
-    supplyLevel: string;
-    demandSignal: string;
     existingVideos: number;
-    avgViewsInTopic: number;
+    avgViewsIfExists: number;
+    baseDemand: number;
+    opportunityType: 'untested' | 'underserved' | 'emerging';
+    riskLevel: 'high' | 'medium' | 'low';
     reasoning: string;
 }
 
@@ -74,7 +71,7 @@ async function checkTopicSupply(topic: string): Promise<{ count: number; avgView
     }
 }
 
-async function checkDemand(topic: string): Promise<number> {
+async function checkBaseDemand(topic: string): Promise<number> {
     try {
         const interestData = await googleTrends.interestOverTime({ keyword: topic });
         const parsed = JSON.parse(interestData);
@@ -86,7 +83,7 @@ async function checkDemand(topic: string): Promise<number> {
     } catch {
         // Trends may fail
     }
-    return 30; // Default moderate interest
+    return 0; // Return 0 if we can't measure (honest)
 }
 
 export async function GET(request: NextRequest) {
@@ -102,7 +99,10 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        // 1. Get related topics from autocomplete
+        // 1. Check base demand for the seed topic first
+        const baseDemand = await checkBaseDemand(seedTopic);
+
+        // 2. Get related topics from autocomplete
         const relatedTopics: string[] = [seedTopic];
 
         try {
@@ -118,71 +118,116 @@ export async function GET(request: NextRequest) {
             // Autocomplete may fail
         }
 
-        // 2. For each format × topic combination, check supply
-        const blueOceans: BlueOcean[] = [];
-        const topicsToCheck = relatedTopics.slice(0, 4); // Limit API calls
+        // 3. For each format × topic combination, check supply
+        const combinations: LowCompetitionCombination[] = [];
+        const topicsToCheck = relatedTopics.slice(0, 4);
 
         for (const topic of topicsToCheck) {
-            for (const formatInfo of PROVEN_FORMATS.slice(0, 8)) { // Top 8 formats
+            // Check demand for this specific topic
+            const topicDemand = topic === seedTopic ? baseDemand : await checkBaseDemand(topic);
+
+            for (const formatInfo of CONTENT_FORMATS.slice(0, 8)) {
                 const combo = `${formatInfo.format} ${topic}`;
 
-                // Check if this combination exists already
                 const supply = await checkTopicSupply(combo);
 
-                // Only consider if supply is low
-                if (supply.count < 10) {
-                    // Check demand for the base topic
-                    const demand = await checkDemand(topic);
+                // Determine opportunity type and risk
+                let opportunityType: 'untested' | 'underserved' | 'emerging';
+                let riskLevel: 'high' | 'medium' | 'low';
+                let reasoning: string;
 
-                    // Calculate opportunity score
-                    // High demand + low supply + high retention format = high opportunity
-                    const supplyPenalty = supply.count * 5; // 0-50 penalty
-                    const demandBonus = demand * 0.5; // 0-50 bonus
-                    const formatBonus = formatInfo.avgRetention * 30; // 15-21 bonus
-
-                    let opportunityScore = 50 + demandBonus - supplyPenalty + formatBonus;
-                    opportunityScore = Math.round(Math.min(100, Math.max(0, opportunityScore)));
-
-                    if (opportunityScore >= 40) {
-                        blueOceans.push({
-                            combination: combo,
-                            format: formatInfo.format,
-                            topic,
-                            opportunityScore,
-                            supplyLevel: supply.count === 0 ? 'Zero' : supply.count < 3 ? 'Very Low' : supply.count < 7 ? 'Low' : 'Moderate',
-                            demandSignal: demand >= 60 ? 'High' : demand >= 30 ? 'Moderate' : 'Low',
-                            existingVideos: supply.count,
-                            avgViewsInTopic: supply.avgViews,
-                            reasoning: generateReasoning(formatInfo, supply, demand)
-                        });
-                    }
+                if (supply.count === 0) {
+                    opportunityType = 'untested';
+                    // HONEST: Zero videos could mean no demand OR untapped opportunity
+                    riskLevel = topicDemand >= 30 ? 'medium' : 'high';
+                    reasoning = topicDemand >= 30
+                        ? `No existing videos but base topic has ${topicDemand}/100 search interest. Worth testing.`
+                        : `No existing videos AND low measurable demand. High risk - may indicate no audience.`;
+                } else if (supply.count < 5) {
+                    opportunityType = 'underserved';
+                    riskLevel = supply.avgViews >= 10000 ? 'low' : topicDemand >= 30 ? 'medium' : 'high';
+                    reasoning = supply.avgViews >= 10000
+                        ? `Only ${supply.count} videos exist, averaging ${supply.avgViews.toLocaleString()} views. Proven demand, low supply.`
+                        : `Few videos exist (${supply.count}). ${topicDemand >= 30 ? 'Base topic has interest.' : 'Demand unconfirmed.'}`;
+                } else if (supply.count < 10) {
+                    opportunityType = 'emerging';
+                    riskLevel = supply.avgViews >= 10000 ? 'low' : 'medium';
+                    reasoning = `${supply.count} videos averaging ${supply.avgViews.toLocaleString()} views. Room for quality entries.`;
+                } else {
+                    // Skip saturated combinations
+                    continue;
                 }
+
+                combinations.push({
+                    combination: combo,
+                    format: formatInfo.format,
+                    topic,
+                    existingVideos: supply.count,
+                    avgViewsIfExists: supply.avgViews,
+                    baseDemand: topicDemand,
+                    opportunityType,
+                    riskLevel,
+                    reasoning
+                });
 
                 // Delay to avoid rate limiting
                 await new Promise(resolve => setTimeout(resolve, 50));
             }
         }
 
-        // Sort by opportunity score
-        blueOceans.sort((a, b) => b.opportunityScore - a.opportunityScore);
+        // Sort by risk level (low first) and then by existing proof (avgViews)
+        combinations.sort((a, b) => {
+            const riskOrder = { low: 0, medium: 1, high: 2 };
+            if (riskOrder[a.riskLevel] !== riskOrder[b.riskLevel]) {
+                return riskOrder[a.riskLevel] - riskOrder[b.riskLevel];
+            }
+            return b.avgViewsIfExists - a.avgViewsIfExists;
+        });
 
-        // 3. Generate insight
-        const zeroCompetition = blueOceans.filter(bo => bo.existingVideos === 0);
-        const highOpportunity = blueOceans.filter(bo => bo.opportunityScore >= 70);
+        // Categorize results
+        const lowRisk = combinations.filter(c => c.riskLevel === 'low');
+        const mediumRisk = combinations.filter(c => c.riskLevel === 'medium');
+        const highRisk = combinations.filter(c => c.riskLevel === 'high');
 
         return NextResponse.json({
             seedTopic,
+            baseDemand,
             totalCombinationsChecked: topicsToCheck.length * 8,
-            blueOceans: blueOceans.slice(0, 10),
-            zeroCompetitionCount: zeroCompetition.length,
-            highOpportunityCount: highOpportunity.length,
-            topPick: blueOceans[0] || null,
-            insight: zeroCompetition.length > 0
-                ? `Found ${zeroCompetition.length} combinations with ZERO existing videos. First mover advantage available.`
-                : highOpportunity.length > 0
-                    ? `Found ${highOpportunity.length} high-opportunity combinations. Low supply, proven formats.`
-                    : 'Market is more competitive. Consider more specific topic angles.',
-            formatsUsed: PROVEN_FORMATS.slice(0, 8).map(f => f.format)
+
+            // REFRAMED: "Low Competition Experiments" not "Blue Oceans"
+            combinations: combinations.slice(0, 12),
+
+            // Categorized by risk
+            byRisk: {
+                low: lowRisk.slice(0, 4),
+                medium: mediumRisk.slice(0, 4),
+                high: highRisk.slice(0, 4)
+            },
+
+            summary: {
+                lowRiskCount: lowRisk.length,
+                mediumRiskCount: mediumRisk.length,
+                highRiskCount: highRisk.length
+            },
+
+            // ADDED: Honest methodology
+            methodology: {
+                approach: 'Combines content formats with topic variations to find low-supply combinations',
+                riskLevels: {
+                    low: 'Proven demand exists (existing videos have good views)',
+                    medium: 'Some signal exists but unproven',
+                    high: 'No existing videos AND no measurable demand - may not work'
+                },
+                disclaimer: 'Low competition may indicate untapped opportunity OR lack of audience demand. We cannot distinguish with certainty.'
+            },
+
+            insight: lowRisk.length > 0
+                ? `Found ${lowRisk.length} low-risk combinations with proven demand. Best bet: "${lowRisk[0].combination}"`
+                : mediumRisk.length > 0
+                    ? `Found ${mediumRisk.length} medium-risk experiments worth testing. Validate demand before investing heavily.`
+                    : 'No low-competition combinations found with proven demand. Consider a more specific topic angle.',
+
+            formatsUsed: CONTENT_FORMATS.slice(0, 8).map(f => f.format)
         });
 
     } catch (error) {
@@ -193,34 +238,4 @@ export async function GET(request: NextRequest) {
         }
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
-}
-
-function generateReasoning(
-    formatInfo: { format: string; avgRetention: number; description: string },
-    supply: { count: number; avgViews: number },
-    demand: number
-): string {
-    const parts: string[] = [];
-
-    if (supply.count === 0) {
-        parts.push('No competition - first mover advantage');
-    } else if (supply.count < 3) {
-        parts.push('Very few competitors');
-    }
-
-    if (formatInfo.avgRetention >= 0.6) {
-        parts.push(`${formatInfo.format} format has high retention`);
-    }
-
-    if (demand >= 60) {
-        parts.push('Strong search interest');
-    } else if (demand >= 30) {
-        parts.push('Moderate search interest');
-    }
-
-    if (supply.avgViews > 50000) {
-        parts.push('Similar topics get good views');
-    }
-
-    return parts.join('. ') + '.';
 }

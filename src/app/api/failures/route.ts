@@ -6,8 +6,10 @@ const BASE_URL = 'https://www.googleapis.com/youtube/v3';
 
 interface FailurePattern {
     pattern: string;
-    failureRate: number;
-    avgUnderperformance: number;
+    occurrences: number;
+    underperformers: number;
+    correlationRate: number;
+    confidence: 'low' | 'medium' | 'high';
     examples: string[];
     advice: string;
 }
@@ -17,8 +19,8 @@ interface VideoAnalysis {
     title: string;
     views: number;
     channelSubs: number;
-    expectedViews: number;
-    actualToExpected: number;
+    channelPercentile: number;
+    performanceRatio: number;
     isUnderperformer: boolean;
     daysOld: number;
 }
@@ -77,6 +79,17 @@ function extractTitlePatterns(title: string): string[] {
     if (title === title.toUpperCase()) patterns.push('all_caps_title');
 
     return patterns;
+}
+
+// Calculate percentile-based threshold based on channel size tier
+function getExpectedPerformanceRatio(subs: number): number {
+    // Smaller channels typically get higher percentage of subs as views
+    // Larger channels get lower percentage
+    if (subs < 1000) return 0.20; // 20% of subs
+    if (subs < 10000) return 0.15; // 15% of subs
+    if (subs < 100000) return 0.10; // 10% of subs
+    if (subs < 1000000) return 0.05; // 5% of subs
+    return 0.03; // 3% of subs for 1M+ channels
 }
 
 export async function GET(request: NextRequest) {
@@ -138,7 +151,7 @@ export async function GET(request: NextRequest) {
             channelSubs[ch.id] = parseInt(ch.statistics.subscriberCount || '0', 10);
         });
 
-        // 4. Analyze each video
+        // 4. Analyze each video with percentile-based thresholds
         const analyses: VideoAnalysis[] = [];
         const patternCounts: Record<string, { total: number; underperformers: number; totalRatio: number }> = {};
 
@@ -151,21 +164,21 @@ export async function GET(request: NextRequest) {
             const subs = channelSubs[item.snippet.channelId] || 1;
             const daysOld = daysSinceUpload(item.snippet.publishedAt);
 
-            // Expected views based on subscriber count (rough heuristic)
-            // Small channels: ~10% of subs, Big channels: ~5% of subs
-            const expectedViewsRatio = subs > 100000 ? 0.03 : subs > 10000 ? 0.05 : 0.10;
-            const expectedViews = Math.max(subs * expectedViewsRatio, 1000);
+            // Use percentile-based expected views based on channel size
+            const expectedRatio = getExpectedPerformanceRatio(subs);
+            const expectedViews = Math.max(subs * expectedRatio, 500);
+            const performanceRatio = views / expectedViews;
 
-            const actualToExpected = views / expectedViews;
-            const isUnderperformer = actualToExpected < 0.5 && daysOld > 7; // <50% of expected after 1 week
+            // Underperformer = less than 50% of expected, and video is at least 7 days old
+            const isUnderperformer = performanceRatio < 0.5 && daysOld >= 7;
 
             const analysis: VideoAnalysis = {
                 id: item.id,
                 title: item.snippet.title,
                 views,
                 channelSubs: subs,
-                expectedViews: Math.round(expectedViews),
-                actualToExpected: Math.round(actualToExpected * 100) / 100,
+                channelPercentile: expectedRatio * 100,
+                performanceRatio: Math.round(performanceRatio * 100) / 100,
                 isUnderperformer,
                 daysOld
             };
@@ -178,41 +191,49 @@ export async function GET(request: NextRequest) {
                     patternCounts[pattern] = { total: 0, underperformers: 0, totalRatio: 0 };
                 }
                 patternCounts[pattern].total++;
-                patternCounts[pattern].totalRatio += actualToExpected;
+                patternCounts[pattern].totalRatio += performanceRatio;
                 if (isUnderperformer) {
                     patternCounts[pattern].underperformers++;
                 }
             });
         });
 
-        // 5. Identify failure patterns (patterns with high underperformance rate)
+        // 5. Identify failure patterns with confidence levels
+        // CHANGED: Require minimum 5 examples (was 3) for reliability
         const failurePatterns: FailurePattern[] = [];
 
         Object.entries(patternCounts)
-            .filter(([_, data]) => data.total >= 3) // Need at least 3 examples
+            .filter(([_, data]) => data.total >= 5) // Increased minimum
             .forEach(([pattern, data]) => {
-                const failureRate = data.underperformers / data.total;
+                const correlationRate = data.underperformers / data.total;
                 const avgPerformance = data.totalRatio / data.total;
 
                 // Consider it a failure pattern if >40% underperform OR avg performance <0.7
-                if (failureRate > 0.4 || avgPerformance < 0.7) {
+                if (correlationRate > 0.4 || avgPerformance < 0.7) {
                     const examples = analyses
                         .filter(a => extractTitlePatterns(a.title).includes(pattern) && a.isUnderperformer)
                         .slice(0, 3)
                         .map(a => a.title);
 
+                    // Calculate confidence based on sample size
+                    const confidence: 'low' | 'medium' | 'high' =
+                        data.total >= 10 ? 'high' :
+                            data.total >= 7 ? 'medium' : 'low';
+
                     failurePatterns.push({
                         pattern: pattern.replace(/_/g, ' ').toUpperCase(),
-                        failureRate: Math.round(failureRate * 100),
-                        avgUnderperformance: Math.round((1 - avgPerformance) * 100),
+                        occurrences: data.total,
+                        underperformers: data.underperformers,
+                        correlationRate: Math.round(correlationRate * 100),
+                        confidence,
                         examples,
                         advice: generateAdvice(pattern)
                     });
                 }
             });
 
-        // Sort by failure rate
-        failurePatterns.sort((a, b) => b.failureRate - a.failureRate);
+        // Sort by correlation rate
+        failurePatterns.sort((a, b) => b.correlationRate - a.correlationRate);
 
         // 6. Calculate overall statistics
         const underperformers = analyses.filter(a => a.isUnderperformer);
@@ -223,20 +244,37 @@ export async function GET(request: NextRequest) {
             totalAnalyzed: analyses.length,
             underperformerCount: underperformers.length,
             underperformanceRate,
+
+            // ADDED: Methodology explanation
+            methodology: {
+                definition: 'Underperformer = video with <50% of expected views after 7+ days',
+                thresholdBasis: 'Expected views based on channel size tier (smaller channels get higher % threshold)',
+                minimumSamples: 5,
+                disclaimer: 'Correlation observed, not causation proven. Title is one of many factors.'
+            },
+
             failurePatterns: failurePatterns.slice(0, 8),
+
             topUnderperformers: underperformers
-                .sort((a, b) => a.actualToExpected - b.actualToExpected)
+                .sort((a, b) => a.performanceRatio - b.performanceRatio)
                 .slice(0, 5)
                 .map(a => ({
                     title: a.title,
                     views: a.views,
-                    expectedViews: a.expectedViews,
-                    performance: `${Math.round(a.actualToExpected * 100)}% of expected`,
+                    expectedViews: Math.round(a.channelSubs * (a.channelPercentile / 100)),
+                    performance: `${Math.round(a.performanceRatio * 100)}% of expected`,
                     videoId: a.id
                 })),
+
             insight: failurePatterns.length > 0
-                ? `Avoid these ${failurePatterns.length} title patterns to reduce failure risk by up to ${failurePatterns[0].failureRate}%`
-                : 'No clear failure patterns detected in this niche'
+                ? `Found ${failurePatterns.length} title patterns correlated with underperformance. Strongest correlation: "${failurePatterns[0].pattern}" (${failurePatterns[0].correlationRate}% of videos underperformed).`
+                : 'No clear failure patterns detected in this niche with current sample.',
+
+            dataQuality: {
+                sampleSize: analyses.length,
+                patternsWithSufficientData: failurePatterns.length,
+                highConfidencePatterns: failurePatterns.filter(p => p.confidence === 'high').length
+            }
         });
 
     } catch (error) {

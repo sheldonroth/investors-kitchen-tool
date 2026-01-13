@@ -40,6 +40,51 @@ function calculateStdDev(values: number[], mean: number): number {
     return Math.sqrt(squaredDiffs.reduce((sum, v) => sum + v, 0) / values.length);
 }
 
+// Calculate confidence based on sample size and data quality
+function calculateConfidence(sampleSize: number, outlierCount: number, trendsAvailable: boolean): {
+    level: 'low' | 'medium' | 'high';
+    score: number;
+    factors: string[];
+} {
+    const factors: string[] = [];
+    let score = 50; // Base
+
+    // Sample size factor
+    if (sampleSize >= 40) {
+        score += 20;
+        factors.push('Good sample size');
+    } else if (sampleSize >= 20) {
+        score += 10;
+        factors.push('Moderate sample size');
+    } else {
+        factors.push('Limited sample size');
+    }
+
+    // Outlier clarity factor
+    if (outlierCount >= 3) {
+        score += 15;
+        factors.push('Clear performance patterns');
+    } else if (outlierCount >= 1) {
+        score += 5;
+        factors.push('Some performance patterns');
+    } else {
+        factors.push('No clear winners to learn from');
+    }
+
+    // Trends data factor
+    if (trendsAvailable) {
+        score += 15;
+        factors.push('Trends data available');
+    } else {
+        factors.push('Trends data unavailable');
+    }
+
+    score = Math.min(100, score);
+    const level = score >= 70 ? 'high' : score >= 45 ? 'medium' : 'low';
+
+    return { level, score, factors };
+}
+
 interface VideoData {
     id: string;
     title: string;
@@ -138,7 +183,7 @@ export async function GET(request: NextRequest) {
         const topOutliers = [...videos].sort((a, b) => (b.zScore || 0) - (a.zScore || 0)).slice(0, 5);
         const overallAvg = videos.reduce((sum, v) => sum + v.views, 0) / videos.length;
 
-        // ===== 2. CALCULATE SATURATION =====
+        // ===== 2. CALCULATE SATURATION (Signal 1) =====
         const uniqueChannels = new Set(videos.map(v => v.channelId)).size;
         const channelConcentration = 1 - (uniqueChannels / videos.length);
         const avgDaysOld = videos.reduce((sum, v) => {
@@ -150,19 +195,21 @@ export async function GET(request: NextRequest) {
         const saturationScore = Math.round(saturationRaw * 100);
         const saturationLabel = saturationScore <= 30 ? 'Low' : saturationScore <= 60 ? 'Medium' : 'High';
 
-        // ===== 3. CALCULATE DEMAND (from Google Trends) =====
-        let demandScore = 50; // Default
+        // ===== 3. CALCULATE DEMAND (Signal 2) =====
+        let demandScore = 50; // Default when Trends unavailable
         let trendingTopics: { keyword: string; growth?: string }[] = [];
+        let trendsAvailable = false;
 
         try {
             const interestData = await googleTrends.interestOverTime({ keyword: idea, geo: regionCode });
             const parsed = JSON.parse(interestData);
             const timelineData = parsed?.default?.timelineData || [];
             if (timelineData.length >= 2) {
+                trendsAvailable = true;
                 const recent = timelineData.slice(-4).reduce((s: number, d: { value: number[] }) => s + d.value[0], 0) / 4;
                 const older = timelineData.slice(0, 4).reduce((s: number, d: { value: number[] }) => s + d.value[0], 0) / 4;
-                demandScore = older > 0 ? Math.round((recent / older) * 50) : 50;
-                demandScore = Math.min(100, Math.max(0, demandScore));
+                // More conservative scoring - normalize to 0-100 range
+                demandScore = older > 0 ? Math.round(Math.min(100, (recent / Math.max(older, 1)) * 50)) : 50;
             }
 
             const relatedQueries = await googleTrends.relatedQueries({ keyword: idea, geo: regionCode });
@@ -176,25 +223,63 @@ export async function GET(request: NextRequest) {
             // Trends API may fail, continue with defaults
         }
 
-        // ===== 4. CALCULATE IDEA VIABILITY SCORE =====
-        // Formula: (100 - saturation) * 0.4 + demand * 0.3 + outlierClarity * 0.3
-        const outlierClarity = outliers.length >= 3 ? 80 : outliers.length >= 1 ? 50 : 30;
-        const viabilityRaw = ((100 - saturationScore) * 0.4) + (demandScore * 0.3) + (outlierClarity * 0.3);
-        const viabilityScore = Math.round(Math.min(100, Math.max(0, viabilityRaw)));
+        // ===== 4. CALCULATE PERFORMANCE CLARITY (Signal 3) =====
+        // How clearly can we identify what works?
+        const outlierRate = outliers.length / videos.length;
+        const performanceClarity = Math.round(Math.min(100, outlierRate * 500 + (outliers.length >= 3 ? 30 : 0)));
 
-        const viabilityLabel = viabilityScore >= 70 ? 'Strong' : viabilityScore >= 45 ? 'Moderate' : 'Weak';
-        const viabilityReasons: string[] = [];
+        // ===== 5. CALCULATE CONFIDENCE =====
+        const confidence = calculateConfidence(videos.length, outliers.length, trendsAvailable);
 
-        if (saturationScore <= 30) viabilityReasons.push('Low competition');
-        else if (saturationScore >= 60) viabilityReasons.push('Crowded market');
+        // ===== 6. MARKET ASSESSMENT (replacing single viability score) =====
+        // Show 3 separate signals instead of combining into one arbitrary score
+        const marketAssessment = {
+            competition: {
+                score: saturationScore,
+                label: saturationLabel,
+                interpretation: saturationScore <= 30
+                    ? 'Room to compete'
+                    : saturationScore <= 60
+                        ? 'Differentiation needed'
+                        : 'Crowded - find unique angle'
+            },
+            interest: {
+                score: demandScore,
+                label: demandScore >= 60 ? 'Growing' : demandScore >= 40 ? 'Stable' : 'Declining',
+                interpretation: demandScore >= 60
+                    ? 'Rising search interest'
+                    : demandScore >= 40
+                        ? 'Steady interest'
+                        : 'Low or declining interest',
+                dataAvailable: trendsAvailable
+            },
+            learnable: {
+                score: performanceClarity,
+                label: performanceClarity >= 60 ? 'Clear' : performanceClarity >= 30 ? 'Some' : 'Unclear',
+                interpretation: performanceClarity >= 60
+                    ? 'Clear patterns to learn from'
+                    : performanceClarity >= 30
+                        ? 'Some patterns visible'
+                        : 'Hard to identify what works',
+                outliersFound: outliers.length
+            }
+        };
 
-        if (demandScore >= 60) viabilityReasons.push('Rising search interest');
-        else if (demandScore <= 30) viabilityReasons.push('Low search demand');
+        // Generate a summary verdict based on the signals
+        const signals = [
+            saturationScore <= 50, // Low-medium competition
+            demandScore >= 40, // Stable or growing interest
+            performanceClarity >= 30 // Some patterns to learn from
+        ];
+        const positiveSignals = signals.filter(Boolean).length;
 
-        if (outliers.length >= 3) viabilityReasons.push('Clear outlier patterns to learn from');
-        else if (outliers.length === 0) viabilityReasons.push('No clear winners to study');
+        const verdict = positiveSignals >= 3
+            ? { assessment: 'Favorable', message: 'Multiple positive signals' }
+            : positiveSignals >= 2
+                ? { assessment: 'Mixed', message: 'Some positive signals, proceed with strategy' }
+                : { assessment: 'Challenging', message: 'Consider a different angle or niche' };
 
-        // ===== 5. FIND BEST LENGTH =====
+        // ===== 7. FIND BEST LENGTH =====
         const lengthStats: Record<string, { count: number; totalViews: number }> = {};
         videos.forEach(v => {
             if (!lengthStats[v.lengthCategory]) {
@@ -204,24 +289,32 @@ export async function GET(request: NextRequest) {
             lengthStats[v.lengthCategory].totalViews += v.views;
         });
 
-        let bestLength = { bucket: 'Medium (5-10 min)', avgViews: overallAvg, multiplier: 1 };
+        let bestLength = { bucket: 'Medium (5-10 min)', avgViews: overallAvg, multiplier: 1, sampleSize: 0 };
         Object.entries(lengthStats).forEach(([bucket, stats]) => {
-            if (stats.count >= 3) {
+            // Require minimum 5 samples instead of 3 for reliability
+            if (stats.count >= 5) {
                 const avgViews = stats.totalViews / stats.count;
                 const multiplier = avgViews / overallAvg;
                 if (multiplier > bestLength.multiplier) {
-                    bestLength = { bucket, avgViews: Math.round(avgViews), multiplier: Math.round(multiplier * 10) / 10 };
+                    bestLength = {
+                        bucket,
+                        avgViews: Math.round(avgViews),
+                        multiplier: Math.round(multiplier * 10) / 10,
+                        sampleSize: stats.count
+                    };
                 }
             }
         });
 
-        // ===== 6. ANALYZE TITLE PATTERNS =====
+        // ===== 8. ANALYZE TITLE PATTERNS =====
         const analysisVideos = topOutliers.length >= 3 ? topOutliers : videos.slice(0, 10);
         const patternInsights = {
             usesNumbers: Math.round((analysisVideos.filter(v => /\d/.test(v.title)).length / analysisVideos.length) * 100),
             usesQuestions: Math.round((analysisVideos.filter(v => /\?/.test(v.title)).length / analysisVideos.length) * 100),
             usesAllCaps: Math.round((analysisVideos.filter(v => /[A-Z]{3,}/.test(v.title)).length / analysisVideos.length) * 100),
-            avgTitleLength: Math.round(analysisVideos.reduce((s, v) => s + v.title.length, 0) / analysisVideos.length)
+            avgTitleLength: Math.round(analysisVideos.reduce((s, v) => s + v.title.length, 0) / analysisVideos.length),
+            basedOn: analysisVideos.length,
+            source: topOutliers.length >= 3 ? 'outliers' : 'top performers'
         };
 
         // Find top words
@@ -251,7 +344,7 @@ export async function GET(request: NextRequest) {
             .filter(([_, count]) => count >= 3)
             .forEach(([pattern]) => saturatedPatterns.push(pattern));
 
-        // ===== 7. GENERATE TITLE SUGGESTIONS =====
+        // ===== 9. GENERATE TITLE SUGGESTIONS =====
         let titleSuggestions: { title: string; reasoning: string }[] = [];
 
         if (GEMINI_API_KEY) {
@@ -269,20 +362,22 @@ VIDEO IDEA: "${idea}"
 
 ${outlierInfo}
 
-SATURATION: ${saturationScore}/100 (${saturationLabel})
-${saturationScore > 60 ? 'HIGH SATURATION: Focus on specific sub-niches or contrarian angles.' : saturationScore > 30 ? 'MEDIUM: Differentiation needed.' : 'LOW: Standard approaches work.'}
+MARKET CONDITIONS:
+- Competition: ${saturationScore}/100 (${saturationLabel})
+- Search Interest: ${demandScore}/100 (${trendsAvailable ? 'measured' : 'estimated'})
+${saturationScore > 60 ? 'HIGH COMPETITION: Focus on specific sub-niches or contrarian angles.' : saturationScore > 30 ? 'MEDIUM: Differentiation recommended.' : 'LOW: Standard approaches viable.'}
 
 SATURATED PATTERNS TO AVOID:
-${saturatedPatterns.length > 0 ? saturatedPatterns.slice(0, 5).map(p => `- "${p}..."`).join('\n') : '- None'}
+${saturatedPatterns.length > 0 ? saturatedPatterns.slice(0, 5).map(p => `- "${p}..."`).join('\n') : '- None detected'}
 
-PATTERNS FROM WINNERS:
+PATTERNS FROM TOP PERFORMERS:
 - ${patternInsights.usesNumbers}% use numbers
 - ${patternInsights.usesQuestions}% are questions  
-- Power words: ${topWords.slice(0, 5).join(', ')}
+- Common words: ${topWords.slice(0, 5).join(', ')}
 
 Generate 5 title variations (40-60 chars each) that:
 1. AVOID saturated patterns
-2. USE winner patterns/structure
+2. USE patterns from winners
 3. Each takes a UNIQUE angle
 
 Return ONLY JSON: {"titles":[{"title":"...","reasoning":"..."}]}`;
@@ -308,27 +403,24 @@ Return ONLY JSON: {"titles":[{"title":"...","reasoning":"..."}]}`;
             ];
         }
 
-        // ===== 8. BUILD RESPONSE =====
+        // ===== 10. BUILD RESPONSE =====
         return NextResponse.json({
             idea,
 
-            // Core answers
-            viability: {
-                score: viabilityScore,
-                label: viabilityLabel,
-                reasons: viabilityReasons,
-                verdict: viabilityScore >= 70
-                    ? '✅ This is a strong video idea'
-                    : viabilityScore >= 45
-                        ? '⚡ Viable with the right angle'
-                        : '⚠️ Challenging niche - consider pivoting'
-            },
+            // Market signals (decomposed, not combined)
+            market: marketAssessment,
+            verdict,
 
+            // Confidence in our analysis
+            confidence,
+
+            // Title suggestions
             titleSuggestions,
 
+            // Recommended length with sample size
             recommendedLength: bestLength,
 
-            // Supporting data (expandable)
+            // Supporting data
             saturation: {
                 score: saturationScore,
                 label: saturationLabel,
@@ -341,6 +433,7 @@ Return ONLY JSON: {"titles":[{"title":"...","reasoning":"..."}]}`;
 
             demand: {
                 score: demandScore,
+                dataAvailable: trendsAvailable,
                 trending: trendingTopics
             },
 
@@ -363,7 +456,13 @@ Return ONLY JSON: {"titles":[{"title":"...","reasoning":"..."}]}`;
                 saturatedPatterns: saturatedPatterns.slice(0, 5)
             },
 
-            totalAnalyzed: videos.length
+            // Data quality indicators
+            dataQuality: {
+                sampleSize: videos.length,
+                outliersDetected: outliers.length,
+                trendsAvailable,
+                disclaimer: 'Based on available public data. Not a guarantee of performance.'
+            }
         });
 
     } catch (error) {

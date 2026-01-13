@@ -13,8 +13,9 @@ import {
   BarChart3,
   Sparkles,
   Target,
-  Zap,
-  ExternalLink
+  AlertCircle,
+  ExternalLink,
+  Info
 } from 'lucide-react';
 
 interface TitleSuggestion {
@@ -24,17 +25,40 @@ interface TitleSuggestion {
 
 interface EvaluationResult {
   idea: string;
-  viability: {
+  market: {
+    competition: {
+      score: number;
+      label: string;
+      interpretation: string;
+    };
+    interest: {
+      score: number;
+      label: string;
+      interpretation: string;
+      dataAvailable: boolean;
+    };
+    learnable: {
+      score: number;
+      label: string;
+      interpretation: string;
+      outliersFound: number;
+    };
+  };
+  verdict: {
+    assessment: string;
+    message: string;
+  };
+  confidence: {
+    level: string;
     score: number;
-    label: string;
-    reasons: string[];
-    verdict: string;
+    factors: string[];
   };
   titleSuggestions: TitleSuggestion[];
   recommendedLength: {
     bucket: string;
     avgViews: number;
     multiplier: number;
+    sampleSize: number;
   };
   saturation: {
     score: number;
@@ -47,6 +71,7 @@ interface EvaluationResult {
   };
   demand: {
     score: number;
+    dataAvailable: boolean;
     trending: { keyword: string; growth?: string }[];
   };
   outliers: {
@@ -66,10 +91,17 @@ interface EvaluationResult {
     usesQuestions: number;
     usesAllCaps: number;
     avgTitleLength: number;
+    basedOn: number;
+    source: string;
     topWords: string[];
     saturatedPatterns: string[];
   };
-  totalAnalyzed: number;
+  dataQuality: {
+    sampleSize: number;
+    outliersDetected: number;
+    trendsAvailable: boolean;
+    disclaimer: string;
+  };
 }
 
 const regions = [
@@ -119,16 +151,17 @@ export default function Home() {
     setTimeout(() => setCopiedIndex(null), 2000);
   };
 
-  const getScoreColor = (score: number) => {
-    if (score >= 70) return 'text-emerald-600';
-    if (score >= 45) return 'text-amber-600';
+  const getSignalColor = (score: number, inverse = false) => {
+    const effectiveScore = inverse ? 100 - score : score;
+    if (effectiveScore >= 60) return 'text-emerald-600';
+    if (effectiveScore >= 40) return 'text-amber-600';
     return 'text-rose-600';
   };
 
-  const getScoreBg = (score: number) => {
-    if (score >= 70) return 'bg-emerald-50 border-emerald-200';
-    if (score >= 45) return 'bg-amber-50 border-amber-200';
-    return 'bg-rose-50 border-rose-200';
+  const getVerdictStyle = (assessment: string) => {
+    if (assessment === 'Favorable') return 'bg-emerald-50 border-emerald-200 text-emerald-800';
+    if (assessment === 'Mixed') return 'bg-amber-50 border-amber-200 text-amber-800';
+    return 'bg-rose-50 border-rose-200 text-rose-800';
   };
 
   return (
@@ -157,7 +190,7 @@ export default function Home() {
           Evaluate your video idea
         </h1>
         <p className="text-lg text-neutral-500 text-center mb-12 font-light">
-          Know if it&apos;s worth making. Get titles that work.
+          Research tool for content decisions. Not a prediction engine.
         </p>
 
         {/* Search */}
@@ -206,37 +239,67 @@ export default function Home() {
       {result && !loading && (
         <div className="max-w-3xl mx-auto px-6 pb-24 space-y-8">
 
-          {/* Viability Score */}
-          <div className={`rounded-2xl p-8 border ${getScoreBg(result.viability.score)}`}>
-            <div className="flex items-start justify-between mb-6">
+          {/* Verdict */}
+          <div className={`rounded-2xl p-6 border ${getVerdictStyle(result.verdict.assessment)}`}>
+            <div className="flex items-start justify-between">
               <div>
-                <p className="text-sm text-neutral-500 uppercase tracking-wide font-medium mb-2">Viability Score</p>
-                <p className={`text-6xl font-light ${getScoreColor(result.viability.score)}`}>
-                  {result.viability.score}
-                </p>
+                <p className="text-sm opacity-70 uppercase tracking-wide font-medium mb-1">Assessment</p>
+                <p className="text-2xl font-light">{result.verdict.assessment}</p>
+                <p className="text-sm mt-1 opacity-80">{result.verdict.message}</p>
               </div>
-              <div className={`w-12 h-12 rounded-full flex items-center justify-center ${result.viability.score >= 70 ? 'bg-emerald-100' :
-                  result.viability.score >= 45 ? 'bg-amber-100' : 'bg-rose-100'
-                }`}>
-                {result.viability.score >= 70 ? (
-                  <Check className={`w-6 h-6 ${getScoreColor(result.viability.score)}`} strokeWidth={1.5} />
-                ) : result.viability.score >= 45 ? (
-                  <Zap className={`w-6 h-6 ${getScoreColor(result.viability.score)}`} strokeWidth={1.5} />
-                ) : (
-                  <TrendingUp className={`w-6 h-6 ${getScoreColor(result.viability.score)}`} strokeWidth={1.5} />
+              <div className="text-right">
+                <p className="text-xs opacity-60">Confidence</p>
+                <p className="text-lg">{result.confidence.score}/100</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Three Signals (Decomposed) */}
+          <div className="grid md:grid-cols-3 gap-4">
+            {/* Competition */}
+            <div className="bg-white rounded-2xl border border-neutral-200 p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <BarChart3 className="w-4 h-4 text-neutral-400" strokeWidth={1.5} />
+                <p className="text-sm text-neutral-500">Competition</p>
+              </div>
+              <p className={`text-3xl font-light ${getSignalColor(result.market.competition.score, true)}`}>
+                {result.market.competition.score}
+              </p>
+              <p className="text-sm text-neutral-600 mt-1">{result.market.competition.interpretation}</p>
+            </div>
+
+            {/* Interest */}
+            <div className="bg-white rounded-2xl border border-neutral-200 p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <TrendingUp className="w-4 h-4 text-neutral-400" strokeWidth={1.5} />
+                <p className="text-sm text-neutral-500">Search Interest</p>
+                {!result.market.interest.dataAvailable && (
+                  <span className="text-xs text-amber-500">(estimated)</span>
                 )}
               </div>
+              <p className={`text-3xl font-light ${getSignalColor(result.market.interest.score)}`}>
+                {result.market.interest.score}
+              </p>
+              <p className="text-sm text-neutral-600 mt-1">{result.market.interest.interpretation}</p>
             </div>
-            <p className={`text-lg font-medium ${getScoreColor(result.viability.score)} mb-3`}>
-              {result.viability.label} opportunity
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {result.viability.reasons.map((reason, i) => (
-                <span key={i} className="px-3 py-1.5 bg-white/60 rounded-full text-sm text-neutral-700">
-                  {reason}
-                </span>
-              ))}
+
+            {/* Learnable */}
+            <div className="bg-white rounded-2xl border border-neutral-200 p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles className="w-4 h-4 text-neutral-400" strokeWidth={1.5} />
+                <p className="text-sm text-neutral-500">Pattern Clarity</p>
+              </div>
+              <p className={`text-3xl font-light ${getSignalColor(result.market.learnable.score)}`}>
+                {result.market.learnable.score}
+              </p>
+              <p className="text-sm text-neutral-600 mt-1">{result.market.learnable.interpretation}</p>
             </div>
+          </div>
+
+          {/* Disclaimer */}
+          <div className="flex items-start gap-3 p-4 bg-neutral-50 rounded-xl text-sm text-neutral-500">
+            <Info className="w-4 h-4 shrink-0 mt-0.5" strokeWidth={1.5} />
+            <p>{result.dataQuality.disclaimer}</p>
           </div>
 
           {/* Title Suggestions */}
@@ -280,7 +343,10 @@ export default function Home() {
               <div>
                 <p className="text-sm text-neutral-500 mb-1">Recommended length</p>
                 <p className="text-xl font-medium text-neutral-900">{result.recommendedLength.bucket}</p>
-                <p className="text-sm text-neutral-500">{result.recommendedLength.multiplier}x more views than other lengths</p>
+                <p className="text-sm text-neutral-500">
+                  {result.recommendedLength.multiplier}x avg views
+                  <span className="text-neutral-400"> · based on {result.recommendedLength.sampleSize} videos</span>
+                </p>
               </div>
             </div>
           </div>
@@ -300,31 +366,15 @@ export default function Home() {
 
           {showDetails && (
             <div className="space-y-6">
-              {/* Saturation & Demand */}
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="bg-white rounded-2xl border border-neutral-200 p-6">
-                  <div className="flex items-center gap-2 mb-4">
-                    <BarChart3 className="w-4 h-4 text-neutral-400" strokeWidth={1.5} />
-                    <p className="text-sm text-neutral-500">Saturation</p>
-                  </div>
-                  <p className={`text-4xl font-light ${result.saturation.label === 'Low' ? 'text-emerald-600' :
-                      result.saturation.label === 'Medium' ? 'text-amber-600' : 'text-rose-600'
-                    }`}>
-                    {result.saturation.score}
-                  </p>
-                  <p className="text-sm text-neutral-500 mt-1">{result.saturation.label} competition</p>
-                </div>
-                <div className="bg-white rounded-2xl border border-neutral-200 p-6">
-                  <div className="flex items-center gap-2 mb-4">
-                    <TrendingUp className="w-4 h-4 text-neutral-400" strokeWidth={1.5} />
-                    <p className="text-sm text-neutral-500">Search demand</p>
-                  </div>
-                  <p className={`text-4xl font-light ${result.demand.score >= 60 ? 'text-emerald-600' :
-                      result.demand.score >= 40 ? 'text-amber-600' : 'text-rose-600'
-                    }`}>
-                    {result.demand.score}
-                  </p>
-                  <p className="text-sm text-neutral-500 mt-1">Based on Google Trends</p>
+              {/* Confidence Factors */}
+              <div className="bg-white rounded-2xl border border-neutral-200 p-6">
+                <p className="text-sm text-neutral-500 mb-4">Analysis confidence factors</p>
+                <div className="flex flex-wrap gap-2">
+                  {result.confidence.factors.map((factor, i) => (
+                    <span key={i} className="px-3 py-1.5 bg-neutral-100 rounded-full text-sm text-neutral-600">
+                      {factor}
+                    </span>
+                  ))}
                 </div>
               </div>
 
@@ -376,6 +426,28 @@ export default function Home() {
                   </div>
                 </div>
               )}
+
+              {/* Data Quality */}
+              <div className="bg-neutral-50 rounded-2xl p-6">
+                <div className="flex items-center gap-2 mb-3">
+                  <AlertCircle className="w-4 h-4 text-neutral-400" strokeWidth={1.5} />
+                  <p className="text-sm font-medium text-neutral-700">Data quality</p>
+                </div>
+                <div className="grid md:grid-cols-3 gap-4 text-sm">
+                  <div>
+                    <p className="text-neutral-500">Sample size</p>
+                    <p className="text-neutral-900">{result.dataQuality.sampleSize} videos</p>
+                  </div>
+                  <div>
+                    <p className="text-neutral-500">Outliers detected</p>
+                    <p className="text-neutral-900">{result.dataQuality.outliersDetected}</p>
+                  </div>
+                  <div>
+                    <p className="text-neutral-500">Trends data</p>
+                    <p className="text-neutral-900">{result.dataQuality.trendsAvailable ? 'Available' : 'Unavailable'}</p>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 

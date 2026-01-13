@@ -10,43 +10,52 @@ interface TopicAnalysis {
     demand: {
         avgViews: number;
         totalViews: number;
-        searchInterest: number; // 0-100 from Trends
-        velocityAvg: number;    // views per day
+        searchInterest: number;
+        velocityAvg: number;
     };
     supply: {
         videoCount: number;
-        qualityVideoCount: number;  // outliers with high velocity
-        channelConcentration: number; // how dominated by few channels
-        avgAge: number;  // days - older = stale supply
+        qualityVideoCount: number;
+        dominantChannelSize: string;
+        avgAge: number;
     };
-    opportunityScore: number;  // The arbitrage signal
-    opportunityGrade: string;  // A, B, C, D, F
-    arbitrageSignal: string;   // Human readable insight
+    gapIndicator: number;
+    signalStrength: 'strong' | 'moderate' | 'weak';
+    interpretation: string;
     sampleVideos: {
         title: string;
         views: number;
         velocity: number;
         thumbnail: string;
         id: string;
+        channelSubs: number;
     }[];
 }
 
-function daysSinceUpload(publishedAt: string): number {
+function daysSince(publishedAt: string): number {
     const uploadDate = new Date(publishedAt);
     const now = new Date();
     return Math.max(1, Math.floor((now.getTime() - uploadDate.getTime()) / (1000 * 60 * 60 * 24)));
 }
 
+function categorizeChannelSize(subs: number): string {
+    if (subs >= 1000000) return 'large';
+    if (subs >= 100000) return 'medium';
+    if (subs >= 10000) return 'small';
+    return 'micro';
+}
+
 async function analyzeTopicDepth(topic: string, regionCode: string): Promise<TopicAnalysis | null> {
     try {
-        // 1. Get YouTube data for this topic
+        // Get videos for this topic
         const searchResponse = await axios.get(`${BASE_URL}/search`, {
             params: {
                 part: 'snippet',
                 q: topic,
                 type: 'video',
-                maxResults: 25,
+                maxResults: 15,
                 regionCode,
+                order: 'relevance',
                 key: YOUTUBE_API_KEY
             }
         });
@@ -56,6 +65,7 @@ async function analyzeTopicDepth(topic: string, regionCode: string): Promise<Top
 
         const videoIds = items.map((item: { id: { videoId: string } }) => item.id.videoId).join(',');
 
+        // Get video stats
         const statsResponse = await axios.get(`${BASE_URL}/videos`, {
             params: {
                 part: 'snippet,statistics',
@@ -64,131 +74,132 @@ async function analyzeTopicDepth(topic: string, regionCode: string): Promise<Top
             }
         });
 
-        const videos = statsResponse.data.items.map((item: {
+        // Get channel stats
+        const channelIds = [...new Set(statsResponse.data.items.map((v: { snippet: { channelId: string } }) => v.snippet.channelId))];
+
+        const channelResponse = await axios.get(`${BASE_URL}/channels`, {
+            params: {
+                part: 'statistics',
+                id: (channelIds as string[]).join(','),
+                key: YOUTUBE_API_KEY
+            }
+        });
+
+        const channelSubs: Record<string, number> = {};
+        channelResponse.data.items.forEach((ch: { id: string; statistics: { subscriberCount?: string } }) => {
+            channelSubs[ch.id] = parseInt(ch.statistics.subscriberCount || '0', 10);
+        });
+
+        // Calculate metrics
+        let totalViews = 0;
+        let totalVelocity = 0;
+        let totalAge = 0;
+        let qualityCount = 0;
+        const channelSizes: string[] = [];
+        const sampleVideos: TopicAnalysis['sampleVideos'] = [];
+
+        statsResponse.data.items.forEach((video: {
             id: string;
             snippet: { title: string; channelId: string; publishedAt: string; thumbnails: { high?: { url: string } } };
             statistics: { viewCount?: string };
         }) => {
-            const views = parseInt(item.statistics.viewCount || '0', 10);
-            const days = daysSinceUpload(item.snippet.publishedAt);
-            return {
-                id: item.id,
-                title: item.snippet.title,
-                channelId: item.snippet.channelId,
-                views,
-                velocity: Math.round(views / days),
-                age: days,
-                thumbnail: item.snippet.thumbnails.high?.url || ''
-            };
+            const views = parseInt(video.statistics.viewCount || '0', 10);
+            const days = daysSince(video.snippet.publishedAt);
+            const velocity = views / days;
+            const subs = channelSubs[video.snippet.channelId] || 0;
+
+            totalViews += views;
+            totalVelocity += velocity;
+            totalAge += days;
+
+            const channelSize = categorizeChannelSize(subs);
+            channelSizes.push(channelSize);
+
+            // Quality video = good velocity relative to channel size
+            const expectedVelocity = subs > 0 ? subs * 0.001 : 100;
+            if (velocity > expectedVelocity * 2) qualityCount++;
+
+            if (sampleVideos.length < 3) {
+                sampleVideos.push({
+                    title: video.snippet.title,
+                    views,
+                    velocity: Math.round(velocity),
+                    thumbnail: video.snippet.thumbnails.high?.url || '',
+                    id: video.id,
+                    channelSubs: subs
+                });
+            }
         });
 
-        // 2. Calculate DEMAND metrics
-        const totalViews = videos.reduce((sum: number, v: { views: number }) => sum + v.views, 0);
-        const avgViews = Math.round(totalViews / videos.length);
-        const avgVelocity = Math.round(videos.reduce((sum: number, v: { velocity: number }) => sum + v.velocity, 0) / videos.length);
+        const videoCount = statsResponse.data.items.length;
+        const avgViews = totalViews / videoCount;
+        const avgVelocity = totalVelocity / videoCount;
+        const avgAge = totalAge / videoCount;
 
-        // Get search interest from Trends (0-100)
-        let searchInterest = 50; // default
+        // Determine dominant channel size
+        const sizeCount: Record<string, number> = {};
+        channelSizes.forEach(s => { sizeCount[s] = (sizeCount[s] || 0) + 1; });
+        const dominantSize = Object.entries(sizeCount).sort((a, b) => b[1] - a[1])[0]?.[0] || 'mixed';
+
+        // Get search interest
+        let searchInterest = 50;
         try {
-            const interestData = await googleTrends.interestOverTime({ keyword: topic, geo: regionCode });
+            const interestData = await googleTrends.interestOverTime({ keyword: topic });
             const parsed = JSON.parse(interestData);
             const timelineData = parsed?.default?.timelineData || [];
             if (timelineData.length > 0) {
-                const recentInterest = timelineData.slice(-4).reduce((s: number, d: { value: number[] }) => s + d.value[0], 0) / 4;
-                searchInterest = Math.round(recentInterest);
+                const recent = timelineData.slice(-4).reduce((s: number, d: { value: number[] }) => s + d.value[0], 0) / 4;
+                searchInterest = Math.round(recent);
             }
         } catch {
-            // Trends may fail, use default
+            // Trends may fail
         }
 
-        // 3. Calculate SUPPLY metrics
-        const videoCount = videos.length;
+        // Calculate gap indicator
+        // FIXED: Use floor on supply to prevent division explosion
+        // Formula: (demand proxy) / (supply proxy + floor)
+        const demandProxy = Math.log10(avgViews + 1) * 20 + searchInterest * 0.3 + Math.log10(avgVelocity + 1) * 15;
+        const supplyFloor = 5; // Minimum supply to prevent instability
+        const supplyProxy = Math.max(videoCount, supplyFloor) + qualityCount * 2;
 
-        // Quality videos = those with velocity > 2x average (outliers)
-        const qualityThreshold = avgVelocity * 2;
-        const qualityVideos = videos.filter((v: { velocity: number }) => v.velocity > qualityThreshold);
-        const qualityVideoCount = qualityVideos.length;
+        const gapIndicator = Math.round((demandProxy / supplyProxy) * 10);
+        const clampedGap = Math.min(100, Math.max(0, gapIndicator));
 
-        // Channel concentration (fewer unique channels = more dominated)
-        const uniqueChannels = new Set(videos.map((v: { channelId: string }) => v.channelId)).size;
-        const channelConcentration = Math.round((1 - uniqueChannels / videos.length) * 100);
+        // Determine signal strength based on data quality
+        let signalStrength: 'strong' | 'moderate' | 'weak' = 'weak';
+        let interpretation = '';
 
-        // Average age of content
-        const avgAge = Math.round(videos.reduce((sum: number, v: { age: number }) => sum + v.age, 0) / videos.length);
-
-        // 4. Calculate OPPORTUNITY SCORE (Content Arbitrage)
-        // Formula: (Demand / Supply) adjusted for quality
-        // High demand + low quality supply = HIGH opportunity
-
-        const demandScore = (avgViews / 10000) * 0.4 + (searchInterest / 100) * 0.3 + (avgVelocity / 1000) * 0.3;
-        const supplyScore = (videoCount / 25) * 0.3 + (qualityVideoCount / 10) * 0.5 + ((100 - channelConcentration) / 100) * 0.2;
-
-        // Opportunity = Demand / Supply (higher is better)
-        // Adjust for content freshness (old content = opportunity for new)
-        const freshnessBonus = Math.min(avgAge / 180, 1) * 0.2; // Up to 20% bonus for stale content
-
-        let opportunityRaw = (demandScore / Math.max(supplyScore, 0.1)) + freshnessBonus;
-        const opportunityScore = Math.round(Math.min(100, opportunityRaw * 25));
-
-        // Grade it
-        const opportunityGrade = opportunityScore >= 80 ? 'A' :
-            opportunityScore >= 65 ? 'B' :
-                opportunityScore >= 50 ? 'C' :
-                    opportunityScore >= 35 ? 'D' : 'F';
-
-        // Generate arbitrage signal
-        let arbitrageSignal = '';
-        if (opportunityScore >= 80) {
-            arbitrageSignal = '🔥 Strong Arbitrage: High demand, weak quality supply. Move fast.';
-        } else if (opportunityScore >= 65) {
-            arbitrageSignal = '📈 Good Opportunity: Demand exceeds supply. Differentiation recommended.';
-        } else if (opportunityScore >= 50) {
-            arbitrageSignal = '⚡ Moderate Gap: Some room to compete with right angle.';
-        } else if (opportunityScore >= 35) {
-            arbitrageSignal = '⚠️ Crowded Market: Supply meets demand. Need unique value prop.';
+        if (avgViews >= 50000 && dominantSize !== 'large' && searchInterest >= 40) {
+            signalStrength = 'strong';
+            interpretation = `Good views (${Math.round(avgViews).toLocaleString()} avg), ${dominantSize} channels dominating, search interest present. Opportunity for quality entry.`;
+        } else if (avgViews >= 10000 && searchInterest >= 30) {
+            signalStrength = 'moderate';
+            interpretation = `Moderate views (${Math.round(avgViews).toLocaleString()} avg). ${dominantSize === 'large' ? 'Large channels dominating - harder to compete.' : 'Room for quality content.'}`;
         } else {
-            arbitrageSignal = '🛑 Oversupplied: Quality content already serves this market well.';
-        }
-
-        // Add specific insights
-        if (qualityVideoCount <= 2 && avgViews > 50000) {
-            arbitrageSignal += ' Few quality videos despite high views.';
-        }
-        if (avgAge > 180 && searchInterest > 50) {
-            arbitrageSignal += ' Content is stale but interest remains.';
-        }
-        if (channelConcentration > 60) {
-            arbitrageSignal += ' Market dominated by few players.';
+            signalStrength = 'weak';
+            interpretation = `Lower view averages (${Math.round(avgViews).toLocaleString()}). ${searchInterest < 30 ? 'Search interest also low.' : ''} Validate demand before investing.`;
         }
 
         return {
             topic,
             demand: {
-                avgViews,
+                avgViews: Math.round(avgViews),
                 totalViews,
                 searchInterest,
-                velocityAvg: avgVelocity
+                velocityAvg: Math.round(avgVelocity)
             },
             supply: {
                 videoCount,
-                qualityVideoCount,
-                channelConcentration,
-                avgAge
+                qualityVideoCount: qualityCount,
+                dominantChannelSize: dominantSize,
+                avgAge: Math.round(avgAge)
             },
-            opportunityScore,
-            opportunityGrade,
-            arbitrageSignal,
-            sampleVideos: videos.slice(0, 3).map((v: { title: string; views: number; velocity: number; thumbnail: string; id: string }) => ({
-                title: v.title,
-                views: v.views,
-                velocity: v.velocity,
-                thumbnail: v.thumbnail,
-                id: v.id
-            }))
+            gapIndicator: clampedGap,
+            signalStrength,
+            interpretation,
+            sampleVideos
         };
-
-    } catch (error) {
-        console.error(`Failed to analyze topic: ${topic}`, error);
+    } catch {
         return null;
     }
 }
@@ -207,10 +218,9 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        // 1. Get related topics to explore
+        // Get related topics
         const relatedTopics: string[] = [seed];
 
-        // Add autocomplete suggestions
         try {
             const autocompleteResponse = await axios.get(
                 `https://suggestqueries.google.com/complete/search?client=youtube&ds=yt&q=${encodeURIComponent(seed)}`
@@ -220,64 +230,82 @@ export async function GET(request: NextRequest) {
                 const suggestions = matches.slice(1, 6).map((m: string) => m.replace(/\["|"/g, ''));
                 relatedTopics.push(...suggestions);
             }
-        } catch {
-            // Autocomplete may fail
-        }
 
-        // Add Google Trends related queries
-        try {
             const relatedQueries = await googleTrends.relatedQueries({ keyword: seed, geo: regionCode });
             const relatedData = JSON.parse(relatedQueries);
-            const rising = relatedData?.default?.rankedList?.[1]?.rankedKeyword || [];
-            const top = relatedData?.default?.rankedList?.[0]?.rankedKeyword || [];
-
-            rising.slice(0, 3).forEach((item: { query: string }) => {
-                if (!relatedTopics.includes(item.query)) relatedTopics.push(item.query);
-            });
-            top.slice(0, 2).forEach((item: { query: string }) => {
-                if (!relatedTopics.includes(item.query)) relatedTopics.push(item.query);
+            const topQueries = relatedData?.default?.rankedList?.[0]?.rankedKeyword || [];
+            topQueries.slice(0, 3).forEach((item: { query: string }) => {
+                if (!relatedTopics.includes(item.query)) {
+                    relatedTopics.push(item.query);
+                }
             });
         } catch {
-            // Trends may fail
+            // Continue with seed only
         }
 
-        // Limit to avoid API quota issues
-        const topicsToAnalyze = relatedTopics.slice(0, 8);
-
-        // 2. Analyze each topic for arbitrage opportunity
+        // Analyze each topic
         const analyses: TopicAnalysis[] = [];
-
-        for (const topic of topicsToAnalyze) {
+        for (const topic of relatedTopics.slice(0, 8)) {
             const analysis = await analyzeTopicDepth(topic, regionCode);
             if (analysis) {
                 analyses.push(analysis);
             }
-            // Small delay to avoid rate limiting
             await new Promise(resolve => setTimeout(resolve, 100));
         }
 
-        // 3. Sort by opportunity score (highest arbitrage first)
-        analyses.sort((a, b) => b.opportunityScore - a.opportunityScore);
+        // Sort by signal strength then gap indicator
+        const strengthOrder = { strong: 0, moderate: 1, weak: 2 };
+        analyses.sort((a, b) => {
+            if (strengthOrder[a.signalStrength] !== strengthOrder[b.signalStrength]) {
+                return strengthOrder[a.signalStrength] - strengthOrder[b.signalStrength];
+            }
+            return b.gapIndicator - a.gapIndicator;
+        });
 
-        // 4. Identify the best opportunities
-        const topOpportunities = analyses.filter(a => a.opportunityScore >= 50);
-        const marketOverview = {
-            totalAnalyzed: analyses.length,
-            averageOpportunity: Math.round(analyses.reduce((s, a) => s + a.opportunityScore, 0) / analyses.length),
-            bestOpportunity: analyses[0]?.opportunityScore || 0,
-            strongOpportunities: analyses.filter(a => a.opportunityGrade === 'A' || a.opportunityGrade === 'B').length
-        };
+        // Categorize
+        const strongSignals = analyses.filter(a => a.signalStrength === 'strong');
+        const moderateSignals = analyses.filter(a => a.signalStrength === 'moderate');
+
+        // Calculate market overview
+        const avgGap = analyses.length > 0
+            ? Math.round(analyses.reduce((s, a) => s + a.gapIndicator, 0) / analyses.length)
+            : 0;
 
         return NextResponse.json({
             seed,
-            marketOverview,
+
+            marketOverview: {
+                topicsAnalyzed: analyses.length,
+                avgGapIndicator: avgGap,
+                strongSignals: strongSignals.length,
+                moderateSignals: moderateSignals.length
+            },
+
             opportunities: analyses,
-            topPicks: topOpportunities.slice(0, 3),
-            investorInsight: topOpportunities.length >= 2
-                ? `Found ${topOpportunities.length} undervalued content opportunities in this market.`
-                : topOpportunities.length === 1
-                    ? 'One viable opportunity identified. Consider the top pick.'
-                    : 'Market appears fairly valued. Consider adjacent niches.'
+
+            topPicks: strongSignals.slice(0, 3),
+
+            methodology: {
+                gapIndicator: 'Ratio of demand signals (views, search interest, velocity) to supply signals (video count, quality videos)',
+                supplyFloor: 'Minimum supply of 5 used to prevent inflated scores from low-data topics',
+                signalStrength: {
+                    strong: 'Good view averages, smaller channels dominating, measurable search interest',
+                    moderate: 'Decent metrics but competition from larger channels or less certain demand',
+                    weak: 'Low metrics - may indicate lack of demand, not opportunity'
+                },
+                channelSizeContext: 'Shows if niche is dominated by large (1M+), medium (100K+), small (10K+), or micro channels',
+                limitations: [
+                    'Gap indicator is a heuristic, not a prediction of success',
+                    'High demand topics may still be hard to compete in if dominated by established creators',
+                    'We cannot validate that making a video will capture the indicated demand'
+                ]
+            },
+
+            insight: strongSignals.length > 0
+                ? `Found ${strongSignals.length} topics with strong opportunity signals. Best: "${strongSignals[0].topic}" (mostly ${strongSignals[0].supply.dominantChannelSize} channels)`
+                : moderateSignals.length > 0
+                    ? `Found ${moderateSignals.length} moderate opportunities. Validate before heavy investment.`
+                    : 'No strong gap signals detected. Try more specific topic angles.'
         });
 
     } catch (error) {
