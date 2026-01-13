@@ -220,6 +220,19 @@ export async function GET(request: NextRequest) {
             .filter(([_, count]) => count >= 3)
             .forEach(([pattern]) => saturatedPatterns.push(pattern));
 
+        // ===== Calculate Saturation Score for Title Optimization =====
+        const uniqueChannels = new Set(videos.map(v => v.channelId)).size;
+        const channelConcentration = 1 - (uniqueChannels / videos.length);
+        const avgDaysOld = videos.reduce((sum, v) => {
+            const days = Math.floor((Date.now() - new Date(v.publishedAt).getTime()) / (1000 * 60 * 60 * 24));
+            return sum + days;
+        }, 0) / videos.length;
+        const ageFactor = Math.min(avgDaysOld / 365, 1);
+        const competitionFactor = Math.min(videos.length / 50, 1);
+        const saturationRaw = (competitionFactor * 0.4) + (channelConcentration * 0.3) + (ageFactor * 0.3);
+        const saturationScore = Math.round(saturationRaw * 100);
+        const saturationLabel = saturationScore <= 30 ? 'Low' : saturationScore <= 60 ? 'Medium' : 'High';
+
         // Generate AI title suggestions using Gemini
         let titleSuggestions: { title: string; reasoning: string }[] = [];
 
@@ -247,10 +260,17 @@ OUTLIER PACKAGING PATTERNS (what WORKS):
 - ${patternInsights.usesAllCaps}% use ALL CAPS words
 - Power words that appear in outliers: ${topWords.join(', ')}
 
+NICHE SATURATION: ${saturationScore}/100 (${saturationLabel})
+${saturationScore > 60
+                        ? '⚠️ HIGH SATURATION: This niche is crowded. Focus on VERY specific angles, underserved sub-niches, or contrarian takes.'
+                        : saturationScore > 30
+                            ? '⚡ MEDIUM SATURATION: Room to compete, but differentiation matters. Find a unique hook.'
+                            : '✅ LOW SATURATION: Great opportunity! Standard approaches can still work well.'}
+
 YOUR STRATEGY:
 1. LEARN from outlier packaging (their title structure, hooks, word choices)
 2. AVOID the saturated patterns everyone else is using
-3. FIND a unique angle that hasn't been overdone
+3. ${saturationScore > 60 ? 'TARGET A SPECIFIC SUB-NICHE or contrarian angle' : 'FIND a unique angle that hasn\'t been overdone'}
 4. Package it like a winner (using outlier patterns)
 
 Generate 5 title variations that:
@@ -258,7 +278,7 @@ Generate 5 title variations that:
 2. Package like outliers (use their proven patterns/structure)
 3. Are 40-60 characters
 4. Each takes a unique approach (contrarian, specific, curiosity gap, result-focused, personal)
-5. Would STAND OUT in search results, not blend in
+5. ${saturationScore > 60 ? 'Target UNDERSERVED sub-niches within this topic' : 'Would STAND OUT in search results, not blend in'}
 
 Return ONLY valid JSON in this exact format:
 {"titles":[{"title":"...","reasoning":"Why this angle is unsaturated + how it uses outlier packaging"}]}`;
@@ -310,6 +330,16 @@ Return ONLY valid JSON in this exact format:
                 zScore: v.zScore,
                 isStatOutlier: v.isStatOutlier
             })),
+            // Saturation data
+            saturation: {
+                score: saturationScore,
+                label: saturationLabel,
+                factors: {
+                    competition: Math.round(competitionFactor * 100),
+                    channelConcentration: Math.round(channelConcentration * 100),
+                    contentAge: Math.round(ageFactor * 100)
+                }
+            },
             // Statistical metrics
             statistics: {
                 outlierCount: statisticalOutliers.length,

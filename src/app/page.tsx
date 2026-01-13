@@ -86,12 +86,39 @@ interface OutlierStats {
   avgMultiplier: number;
 }
 
+interface Saturation {
+  score: number;
+  label: string;
+  color: string;
+  factors: {
+    competition: number;
+    channelConcentration: number;
+    contentAge: number;
+  };
+  verdict: string;
+}
+
+interface TrendingTopic {
+  keyword: string;
+  growth?: string;
+  source: string;
+}
+
+interface BlueOcean {
+  keyword: string;
+  opportunityScore: number;
+  reason: string;
+}
+
 interface AnalysisResult {
   query: string;
   totalVideos: number;
   overallAvgViews: number;
   videos: VideoData[];
   outlierStats: OutlierStats;
+  saturation: Saturation;
+  trendingTopics: TrendingTopic[];
+  blueOceans: BlueOcean[];
   lengthAnalysis: LengthBucket[];
   marketHoles: MarketHole[];
   optimizationWarning: OptimizationWarning | null;
@@ -153,6 +180,15 @@ interface OptimizeResult {
     zScore?: number;
     isStatOutlier?: boolean;
   }[];
+  saturation: {
+    score: number;
+    label: string;
+    factors: {
+      competition: number;
+      channelConcentration: number;
+      contentAge: number;
+    };
+  };
   statistics: {
     outlierCount: number;
     outlierRate: number;
@@ -526,6 +562,43 @@ export default function Home() {
               </div>
             </div>
 
+            {/* Saturation Score */}
+            <div className="card p-6">
+              <div className="section-header">
+                <div className={`section-icon ${optimizeResult.saturation.label === 'Low' ? 'bg-green-100 text-green-600' :
+                    optimizeResult.saturation.label === 'Medium' ? 'bg-yellow-100 text-yellow-600' :
+                      'bg-red-100 text-red-600'
+                  }`}>🎯</div>
+                <h2 className="text-title text-gray-900">Niche Saturation</h2>
+              </div>
+              <div className="flex items-center gap-6 mt-4">
+                <div className={`text-5xl font-bold ${optimizeResult.saturation.label === 'Low' ? 'text-green-600' :
+                    optimizeResult.saturation.label === 'Medium' ? 'text-yellow-600' :
+                      'text-red-600'
+                  }`}>
+                  {optimizeResult.saturation.score}
+                </div>
+                <div className="flex-1">
+                  <div className={`text-lg font-medium ${optimizeResult.saturation.label === 'Low' ? 'text-green-700' :
+                      optimizeResult.saturation.label === 'Medium' ? 'text-yellow-700' :
+                        'text-red-700'
+                    }`}>
+                    {optimizeResult.saturation.label} Saturation
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {optimizeResult.saturation.label === 'Low'
+                      ? 'Great opportunity - room to grow!'
+                      : optimizeResult.saturation.label === 'Medium'
+                        ? 'Competitive - unique angle needed'
+                        : 'Crowded niche - need strong differentiation'}
+                  </div>
+                </div>
+              </div>
+              <p className="text-xs text-gray-400 mt-3">
+                Title suggestions above are optimized based on this saturation level
+              </p>
+            </div>
+
             {/* Recommended Length */}
             <div className="card p-6">
               <div className="section-header">
@@ -750,6 +823,109 @@ export default function Home() {
                 <span className="flex items-center gap-2">
                   <span className="w-3 h-3 rounded-sm bg-gray-300" /> Below avg views
                 </span>
+              </div>
+            </div>
+
+            {/* Saturation Score */}
+            <div className="card p-6">
+              <div className="section-header">
+                <div className={`section-icon ${result.saturation.color === 'green' ? 'bg-green-100 text-green-600' :
+                  result.saturation.color === 'yellow' ? 'bg-yellow-100 text-yellow-600' :
+                    'bg-red-100 text-red-600'
+                  }`}>📊</div>
+                <h2 className="text-title text-gray-900">Niche Saturation Score</h2>
+              </div>
+              <div className="flex items-center gap-6 mt-4">
+                <div className={`text-5xl font-bold ${result.saturation.color === 'green' ? 'text-green-600' :
+                  result.saturation.color === 'yellow' ? 'text-yellow-600' :
+                    'text-red-600'
+                  }`}>
+                  {result.saturation.score}
+                </div>
+                <div className="flex-1">
+                  <div className={`text-lg font-medium ${result.saturation.color === 'green' ? 'text-green-700' :
+                    result.saturation.color === 'yellow' ? 'text-yellow-700' :
+                      'text-red-700'
+                    }`}>
+                    {result.saturation.label} Saturation
+                  </div>
+                  <div className="text-sm text-gray-500">{result.saturation.verdict}</div>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-4 mt-4">
+                <div className="text-center p-3 bg-gray-50 rounded-xl">
+                  <div className="text-xl font-bold text-gray-900">{result.saturation.factors.competition}%</div>
+                  <div className="text-xs text-gray-500">Competition</div>
+                </div>
+                <div className="text-center p-3 bg-gray-50 rounded-xl">
+                  <div className="text-xl font-bold text-gray-900">{result.saturation.factors.channelConcentration}%</div>
+                  <div className="text-xs text-gray-500">Channel Concentration</div>
+                </div>
+                <div className="text-center p-3 bg-gray-50 rounded-xl">
+                  <div className="text-xl font-bold text-gray-900">{result.saturation.factors.contentAge}%</div>
+                  <div className="text-xs text-gray-500">Content Age</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Trending Topics & Blue Oceans */}
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* Trending Topics */}
+              <div className="card p-6">
+                <div className="section-header">
+                  <div className="section-icon bg-red-100 text-red-600">🔥</div>
+                  <h2 className="text-title text-gray-900">Trending Topics</h2>
+                </div>
+                <p className="text-sm text-gray-500 mb-4">Rising searches in this niche</p>
+                <div className="space-y-2">
+                  {result.trendingTopics.map((topic, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleAnalyze(topic.keyword)}
+                      className="w-full flex items-center justify-between p-3 bg-gray-50 rounded-xl hover:bg-red-50 transition-colors text-left"
+                    >
+                      <span className="font-medium text-gray-900">{topic.keyword}</span>
+                      <div className="flex items-center gap-2">
+                        {topic.growth && (
+                          <span className="text-xs font-bold text-green-600">{topic.growth}</span>
+                        )}
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${topic.source === 'trends' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                          }`}>
+                          {topic.source === 'trends' ? '📈 Trends' : '🔍 YT'}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Blue Ocean Finder */}
+              <div className="card p-6">
+                <div className="section-header">
+                  <div className="section-icon bg-cyan-100 text-cyan-600">🌊</div>
+                  <h2 className="text-title text-gray-900">Blue Ocean Opportunities</h2>
+                </div>
+                <p className="text-sm text-gray-500 mb-4">Low competition + high demand = opportunity</p>
+                <div className="space-y-2">
+                  {result.blueOceans.map((ocean, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleAnalyze(ocean.keyword)}
+                      className="w-full flex items-center justify-between p-3 bg-gray-50 rounded-xl hover:bg-cyan-50 transition-colors text-left"
+                    >
+                      <div className="flex-1">
+                        <span className="font-medium text-gray-900">{ocean.keyword}</span>
+                        <div className="text-xs text-gray-500">{ocean.reason}</div>
+                      </div>
+                      <div className={`text-lg font-bold ${ocean.opportunityScore >= 70 ? 'text-green-600' :
+                        ocean.opportunityScore >= 50 ? 'text-yellow-600' :
+                          'text-gray-600'
+                        }`}>
+                        {ocean.opportunityScore}
+                      </div>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
 

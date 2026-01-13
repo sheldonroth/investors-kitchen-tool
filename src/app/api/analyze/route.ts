@@ -583,12 +583,108 @@ export async function GET(request: NextRequest) {
             thumbnailPrompt += `- Face: ${query.toLowerCase().includes('tutorial') ? 'Optional pointing gesture' : 'Expressive reaction'}\n`;
         }
 
+        // ===== NEW: Saturation Score (0-100) =====
+        const uniqueChannels = new Set(videos.map(v => v.channelId)).size;
+        const channelConcentration = 1 - (uniqueChannels / videos.length); // Higher = fewer unique channels = more saturated
+
+        const avgDaysOld = videos.reduce((sum, v) => {
+            const days = Math.floor((Date.now() - new Date(v.publishedAt).getTime()) / (1000 * 60 * 60 * 24));
+            return sum + days;
+        }, 0) / videos.length;
+        const ageFactor = Math.min(avgDaysOld / 365, 1); // Older content = stale niche
+
+        const competitionFactor = Math.min(videos.length / 100, 1); // More videos = more competition
+
+        const saturationRaw = (competitionFactor * 0.4) + (channelConcentration * 0.3) + (ageFactor * 0.3);
+        const saturationScore = Math.round(saturationRaw * 100);
+
+        const saturation = {
+            score: saturationScore,
+            label: saturationScore <= 30 ? 'Low' : saturationScore <= 60 ? 'Medium' : 'High',
+            color: saturationScore <= 30 ? 'green' : saturationScore <= 60 ? 'yellow' : 'red',
+            factors: {
+                competition: Math.round(competitionFactor * 100),
+                channelConcentration: Math.round(channelConcentration * 100),
+                contentAge: Math.round(ageFactor * 100)
+            },
+            verdict: saturationScore <= 30
+                ? 'Great opportunity - low competition, room to grow'
+                : saturationScore <= 60
+                    ? 'Competitive but viable with a unique angle'
+                    : 'Highly saturated - need strong differentiation'
+        };
+
+        // ===== NEW: Trending Topics (from Google Trends) =====
+        let trendingTopics: { keyword: string; growth?: string; source: string }[] = [];
+        try {
+            const relatedQueries = await googleTrends.relatedQueries({ keyword: query, geo: regionCode });
+            const relatedData = JSON.parse(relatedQueries);
+            const rising = relatedData?.default?.rankedList?.[1]?.rankedKeyword || [];
+
+            trendingTopics = rising.slice(0, 5).map((item: { query: string; formattedValue: string }) => ({
+                keyword: item.query,
+                growth: item.formattedValue,
+                source: 'trends'
+            }));
+        } catch {
+            // Trends API may fail, just continue
+        }
+
+        // Add autocomplete suggestions as trending if we don't have enough from Trends
+        if (trendingTopics.length < 5) {
+            const autocompleteToAdd = autocompleteResults
+                .filter(q => !trendingTopics.some(t => t.keyword.toLowerCase() === q.toLowerCase()))
+                .slice(0, 5 - trendingTopics.length)
+                .map(keyword => ({ keyword, source: 'autocomplete' as const }));
+            trendingTopics = [...trendingTopics, ...autocompleteToAdd];
+        }
+
+        // ===== NEW: Blue Ocean Finder =====
+        // Find related topics with high opportunity (demand vs competition estimate)
+        const blueOceans: { keyword: string; opportunityScore: number; reason: string }[] = [];
+
+        // Use autocomplete + trending to find blue oceans
+        const potentialBlueOceans = [...new Set([
+            ...autocompleteResults.slice(0, 8),
+            ...trendingTopics.map(t => t.keyword)
+        ])].filter(k => k.toLowerCase() !== query.toLowerCase());
+
+        // Score each potential blue ocean
+        for (const keyword of potentialBlueOceans.slice(0, 6)) {
+            // Longer, more specific queries tend to have less competition
+            const specificity = keyword.split(' ').length;
+            const isQuestion = keyword.includes('?') || keyword.toLowerCase().startsWith('how') || keyword.toLowerCase().startsWith('what');
+            const isTrending = trendingTopics.some(t => t.keyword === keyword);
+
+            let score = 50;
+            if (specificity >= 4) score += 15; // Long-tail = less competition
+            if (isQuestion) score += 10; // Questions often underserved
+            if (isTrending) score += 20; // Trending = demand
+            if (keyword.includes('for beginners') || keyword.includes('tutorial')) score += 5;
+
+            score = Math.min(95, Math.max(30, score));
+
+            const reason = [
+                specificity >= 4 ? 'Long-tail keyword' : null,
+                isQuestion ? 'Question format' : null,
+                isTrending ? 'Rising interest' : null
+            ].filter(Boolean).join(', ') || 'Related topic';
+
+            blueOceans.push({ keyword, opportunityScore: score, reason });
+        }
+
+        // Sort by opportunity score
+        blueOceans.sort((a, b) => b.opportunityScore - a.opportunityScore);
+
         return NextResponse.json({
             query,
             totalVideos: videosWithOutliers.length,
             overallAvgViews: Math.round(overallAvgViews),
             videos: videosWithOutliers,
             outlierStats,
+            saturation,
+            trendingTopics,
+            blueOceans: blueOceans.slice(0, 5),
             lengthAnalysis: analysis,
             marketHoles: holes,
             optimizationWarning,
