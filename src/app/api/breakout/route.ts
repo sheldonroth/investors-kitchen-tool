@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
+import { logMean, logStdDev, nicheNormalizedVelocity, logTransform, expTransform } from '@/lib/stats';
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 const BASE_URL = 'https://www.googleapis.com/youtube/v3';
@@ -60,22 +61,40 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-        // 1. Search for videos in the niche
+        // 1. Search for videos in the niche and get baseline stats
         const searchResponse = await axios.get(`${BASE_URL}/search`, {
             params: {
                 part: 'snippet',
                 q: niche,
                 type: 'video',
                 maxResults: 50,
-                order: 'date', // Recent videos to find emerging channels
-                publishedAfter: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(), // Last 90 days
+                order: 'date',
+                publishedAfter: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString(),
                 key: YOUTUBE_API_KEY
             }
         });
 
-        // 2. Extract unique channels
+        const videoIds = searchResponse.data.items.map((item: { id: { videoId: string } }) => item.id.videoId).join(',');
+
+        // Get stats for baseline calculation
+        const baselineResponse = await axios.get(`${BASE_URL}/videos`, {
+            params: {
+                part: 'snippet,statistics',
+                id: videoIds,
+                key: YOUTUBE_API_KEY
+            }
+        });
+
+        // Calculate niche baseline velocities
+        const nicheVelocities: number[] = baselineResponse.data.items.map((v: { snippet: { publishedAt: string }, statistics: { viewCount?: string } }) => {
+            const views = parseInt(v.statistics.viewCount || '0', 10);
+            const days = daysSinceUpload(v.snippet.publishedAt);
+            return days > 0 ? views / days : 0;
+        }).filter((v: number) => v > 0);
+
+        // 2. Extract unique channels from baseline videos
         const channelMap = new Map<string, { id: string; title: string }>();
-        searchResponse.data.items.forEach((item: { snippet: { channelId: string; channelTitle: string } }) => {
+        baselineResponse.data.items.forEach((item: { snippet: { channelId: string; channelTitle: string } }) => {
             if (!channelMap.has(item.snippet.channelId)) {
                 channelMap.set(item.snippet.channelId, {
                     id: item.snippet.channelId,
@@ -149,29 +168,39 @@ export async function GET(request: NextRequest) {
 
                 if (recentVideos.length < 3) continue;
 
-                // 4. Calculate growth metrics
+                // 4. Calculate growth metrics (Log-normalized)
                 const velocities = recentVideos.map(v => v.velocity);
-                const avgVelocity = calculateMean(velocities);
-                const stdVelocity = calculateStdDev(velocities, avgVelocity);
+                const avgVelocity = logMean(velocities); // Log-mean
 
                 // Velocity trend: compare first half vs second half
-                const firstHalf = velocities.slice(Math.floor(velocities.length / 2));
-                const secondHalf = velocities.slice(0, Math.floor(velocities.length / 2));
-                const velocityTrend = calculateMean(secondHalf) - calculateMean(firstHalf);
+                const midPoint = Math.floor(velocities.length / 2);
+                const firstHalf = velocities.slice(midPoint);
+                const secondHalf = velocities.slice(0, midPoint);
+                const velocityTrend = logMean(secondHalf) - logMean(firstHalf); // Log-trend
 
-                // Consistency score (lower std dev = more consistent)
-                const consistencyScore = avgVelocity > 0
-                    ? Math.round(Math.max(0, 100 - (stdVelocity / avgVelocity) * 100))
-                    : 0;
+                // Consistency score using Log-StdDev (lower is better)
+                const stdVelocity = logStdDev(velocities);
+                // Normalized consistency: 0-1 scale where 0 std = 100 score
+                const consistencyScore = Math.max(0, Math.round(100 - (stdVelocity * 20)));
 
-                // Breakout potential formula
-                // High velocity + positive trend + decent consistency = potential
-                const velocityScore = Math.min(100, avgVelocity / 100); // Normalize to 100
-                const trendScore = velocityTrend > 0 ? Math.min(50, velocityTrend / 10) : 0;
-                const subsciberToVelocityRatio = subscribers > 0 ? avgVelocity / subscribers : 0;
-                const punchAboveWeight = subsciberToVelocityRatio > 0.01 ? 30 : 0; // Getting more views than sub count would suggest
+                // Breakout potential formula (Log-normalized & Niche-adjusted)
+                // 1. Niche Performance Score (0-40 pts): How high is velocity compared to niche baseline?
+                const nicheScore = nicheNormalizedVelocity(expTransform(avgVelocity), nicheVelocities);
+                // Normalized z-score mapped to 0-40 scale (z=0 -> 20pts, z=2 -> 40pts)
+                const relativePerformanceScore = Math.min(40, Math.max(0, 20 + (nicheScore.normalized * 10)));
 
-                const breakoutPotential = Math.round(Math.min(100, velocityScore + trendScore + punchAboveWeight + consistencyScore * 0.2));
+                // 2. Trend Score (0-30 pts): Is it accelerating?
+                // Trend > 0.5 (significant log growth) gets max points
+                const trendScore = velocityTrend > 0 ? Math.min(30, velocityTrend * 40) : 0;
+
+                // 3. Punch Above Weight (0-10 pts): Views vs Subs
+                const subVelocityRatio = subscribers > 0 ? expTransform(avgVelocity) / subscribers : 0;
+                const punchAboveWeight = subVelocityRatio > 0.05 ? 10 : subVelocityRatio > 0.01 ? 5 : 0;
+
+                // 4. Consistency Bonus (0-20 pts)
+                const consistencyBonus = consistencyScore * 0.2;
+
+                const breakoutPotential = Math.round(Math.min(100, relativePerformanceScore + trendScore + punchAboveWeight + consistencyBonus));
 
                 // 5. Make prediction
                 let outlook: 'High Potential' | 'Moderate' | 'Steady' | 'Declining';

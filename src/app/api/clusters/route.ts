@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import googleTrends from 'google-trends-api';
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.YOUTUBE_API_KEY;
@@ -28,6 +29,7 @@ interface ContentGap {
     reasoning: string;
     urgency: 'high' | 'medium' | 'low';
     relatedCluster: string;
+    searchInterest?: number;
 }
 
 function daysSinceUpload(publishedAt: string): number {
@@ -157,7 +159,7 @@ Return ONLY valid JSON:
             };
         });
 
-        // 5. Process gaps
+        // 5. Process gaps with Google Trends validation (robust/optional)
         const contentGaps: ContentGap[] = (parsed.gaps || []).map((gap: {
             topic: string;
             opportunity: string;
@@ -171,6 +173,32 @@ Return ONLY valid JSON:
             urgency: gap.urgency as 'high' | 'medium' | 'low',
             relatedCluster: gap.relatedCluster
         }));
+
+        // Validate gaps with Google Trends (if possible) to separate true demand from AI hallucinations
+        // "Validate gaps with Google Trends" from audit
+        try {
+            await Promise.all(contentGaps.slice(0, 3).map(async (gap) => {
+                try {
+                    const trendData = await googleTrends.interestOverTime({
+                        keyword: gap.topic,
+                        startTime: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000), // Last year
+                    });
+                    const parsedTrend = JSON.parse(trendData);
+                    const timeline = parsedTrend.default?.timelineData || [];
+                    if (timeline.length > 0) {
+                        // Calculate avg interest over last 90 days
+                        const recent = timeline.slice(-12); // approx 12 weeks
+                        const avgInterest = recent.reduce((sum: number, t: { value: number[] }) => sum + (t.value[0] || 0), 0) / recent.length;
+                        gap.searchInterest = Math.round(avgInterest);
+                    }
+                } catch (e) {
+                    // Fail silently for trends - unofficial API often rate limited
+                    console.warn(`Trends check failed for ${gap.topic}`);
+                }
+            }));
+        } catch (e) {
+            console.error('Trends validation error', e);
+        }
 
         // 6. Calculate niche statistics
         const totalViews = videos.reduce((sum, v) => sum + v.views, 0);
