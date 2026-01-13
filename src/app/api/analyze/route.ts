@@ -121,23 +121,63 @@ export async function GET(request: NextRequest) {
             bucket.videos.push(video);
         });
 
-        // Calculate averages and identify holes
+        // Calculate baselines
+        const totalViews = videos.reduce((sum, v) => sum + v.views, 0);
+        const overallAvgViews = totalViews / videos.length;
+        const avgCountPerCategory = videos.length / categories.length;
+
+        // Calculate averages and scores for each category
         const analysis = categories.map(cat => {
             const bucket = durationBuckets[cat];
             bucket.avgViews = bucket.count > 0 ? Math.round(bucket.totalViews / bucket.count) : 0;
-            return bucket;
+
+            // Calculate scores
+            const competitionScore = bucket.count > 0 ? 1 - (bucket.count / videos.length) : 1;
+            const demandScore = overallAvgViews > 0 ? bucket.avgViews / overallAvgViews : 0;
+            const opportunityScore = competitionScore * demandScore;
+
+            return {
+                ...bucket,
+                competitionScore: Math.round(competitionScore * 100),
+                demandScore: Math.round(demandScore * 100),
+                opportunityScore: Math.round(opportunityScore * 100)
+            };
         });
 
-        // Find "holes" - categories with high avg views but low video count
-        const avgCount = videos.length / categories.length;
-        const holes = analysis.filter(a => a.count < avgCount && a.avgViews > 0).map(a => ({
-            range: a.range,
-            reason: `Low competition (${a.count} videos) with ${a.avgViews.toLocaleString()} avg views`
-        }));
+        // Find TRUE holes using stricter criteria
+        const holes = analysis
+            .filter(a => {
+                const isLowCompetition = a.count < avgCountPerCategory * 0.8; // 20%+ below average
+                const isHighDemand = a.avgViews >= overallAvgViews; // At or above average views
+                return isLowCompetition && isHighDemand && a.count > 0;
+            })
+            .map(a => {
+                // Classify hole type
+                const isVeryLowComp = a.count < avgCountPerCategory * 0.5;
+                const isVeryHighDemand = a.avgViews > overallAvgViews * 1.5;
+
+                let type: 'hot' | 'opportunity' = 'opportunity';
+                let emoji = '✅';
+
+                if (isVeryLowComp && isVeryHighDemand) {
+                    type = 'hot';
+                    emoji = '🔥';
+                }
+
+                return {
+                    range: a.range,
+                    type,
+                    emoji,
+                    reason: `${a.count} videos (${Math.round((a.count / videos.length) * 100)}% of results) with ${a.avgViews.toLocaleString()} avg views`,
+                    opportunityScore: a.opportunityScore
+                };
+            })
+            .sort((a, b) => b.opportunityScore - a.opportunityScore);
 
         return NextResponse.json({
             query,
             totalVideos: videos.length,
+            overallAvgViews: Math.round(overallAvgViews),
             videos,
             lengthAnalysis: analysis,
             marketHoles: holes

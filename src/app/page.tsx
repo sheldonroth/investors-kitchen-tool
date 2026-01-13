@@ -19,16 +19,23 @@ interface LengthBucket {
   count: number;
   avgViews: number;
   videos: VideoData[];
+  competitionScore: number;
+  demandScore: number;
+  opportunityScore: number;
 }
 
 interface MarketHole {
   range: string;
   reason: string;
+  type: 'hot' | 'opportunity';
+  emoji: string;
+  opportunityScore: number;
 }
 
 interface AnalysisResult {
   query: string;
   totalVideos: number;
+  overallAvgViews: number;
   videos: VideoData[];
   lengthAnalysis: LengthBucket[];
   marketHoles: MarketHole[];
@@ -109,36 +116,60 @@ export default function Home() {
         {result && (
           <div className="space-y-8">
             {/* Market Holes */}
-            {result.marketHoles.length > 0 && (
-              <div className="bg-slate-800/50 rounded-2xl p-6 border border-purple-500/30">
-                <h2 className="text-2xl font-bold text-purple-400 mb-4 flex items-center gap-2">
+            {result.marketHoles.length > 0 ? (
+              <div className="bg-slate-800/50 rounded-2xl p-6 border border-green-500/30">
+                <h2 className="text-2xl font-bold text-green-400 mb-4 flex items-center gap-2">
                   <span className="text-3xl">🕳️</span> Market Holes Detected
                 </h2>
                 <div className="grid md:grid-cols-2 gap-4">
                   {result.marketHoles.map((hole, i) => (
-                    <div key={i} className="bg-purple-500/10 border border-purple-500/30 rounded-xl p-4">
-                      <p className="text-lg font-semibold text-purple-300">{hole.range}</p>
+                    <div key={i} className={`rounded-xl p-4 border ${hole.type === 'hot' ? 'bg-orange-500/10 border-orange-500/30' : 'bg-green-500/10 border-green-500/30'}`}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-2xl">{hole.emoji}</span>
+                        <p className="text-lg font-semibold text-white">{hole.range}</p>
+                        <span className="ml-auto bg-white/10 px-2 py-0.5 rounded text-xs text-slate-300">
+                          Score: {hole.opportunityScore}
+                        </span>
+                      </div>
                       <p className="text-slate-400 text-sm">{hole.reason}</p>
                     </div>
                   ))}
                 </div>
               </div>
+            ) : (
+              <div className="bg-slate-800/50 rounded-2xl p-6 border border-slate-700">
+                <h2 className="text-xl font-bold text-slate-400 mb-2 flex items-center gap-2">
+                  <span className="text-2xl">📊</span> No Market Holes Found
+                </h2>
+                <p className="text-slate-500 text-sm">
+                  This niche appears well-covered across all video lengths. Consider a different angle or sub-niche.
+                </p>
+              </div>
             )}
 
             {/* Length Analysis */}
             <div className="bg-slate-800/50 rounded-2xl p-6 border border-slate-700">
-              <h2 className="text-2xl font-bold text-pink-400 mb-4 flex items-center gap-2">
+              <h2 className="text-2xl font-bold text-pink-400 mb-2 flex items-center gap-2">
                 <span className="text-3xl">📊</span> Length Distribution
               </h2>
+              <p className="text-slate-500 text-sm mb-4">Overall avg: {result.overallAvgViews?.toLocaleString() || 0} views</p>
               <div className="grid md:grid-cols-5 gap-4">
-                {result.lengthAnalysis.map((bucket, i) => (
-                  <div key={i} className="bg-slate-700/50 rounded-xl p-4 text-center">
-                    <p className="text-sm text-slate-400">{bucket.range}</p>
-                    <p className="text-3xl font-bold text-white mt-2">{bucket.count}</p>
-                    <p className="text-sm text-slate-500">videos</p>
-                    <p className="text-xs text-pink-400 mt-2">{bucket.avgViews.toLocaleString()} avg views</p>
-                  </div>
-                ))}
+                {result.lengthAnalysis.map((bucket, i) => {
+                  const isAboveAvg = bucket.avgViews >= (result.overallAvgViews || 0);
+                  return (
+                    <div key={i} className={`rounded-xl p-4 text-center border ${isAboveAvg ? 'bg-green-900/20 border-green-500/30' : 'bg-slate-700/50 border-slate-600'}`}>
+                      <p className="text-sm text-slate-400">{bucket.range}</p>
+                      <p className="text-3xl font-bold text-white mt-2">{bucket.count}</p>
+                      <p className="text-sm text-slate-500">videos</p>
+                      <p className={`text-xs mt-2 ${isAboveAvg ? 'text-green-400' : 'text-pink-400'}`}>
+                        {bucket.avgViews.toLocaleString()} avg views
+                      </p>
+                      <div className="mt-2 text-xs text-slate-500">
+                        Opp: <span className="text-purple-400">{bucket.opportunityScore}</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
