@@ -109,8 +109,22 @@ const exampleQueries = [
   'study with me',
 ];
 
+const regions = [
+  { code: 'US', name: 'United States' },
+  { code: 'GB', name: 'United Kingdom' },
+  { code: 'CA', name: 'Canada' },
+  { code: 'AU', name: 'Australia' },
+  { code: 'DE', name: 'Germany' },
+  { code: 'FR', name: 'France' },
+  { code: 'IN', name: 'India' },
+  { code: 'BR', name: 'Brazil' },
+  { code: 'JP', name: 'Japan' },
+  { code: 'MX', name: 'Mexico' },
+];
+
 export default function Home() {
   const [query, setQuery] = useState('');
+  const [region, setRegion] = useState('US');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -126,7 +140,7 @@ export default function Home() {
     if (searchQuery) setQuery(searchQuery);
 
     try {
-      const res = await fetch(`/api/analyze?q=${encodeURIComponent(q)}&max=50`);
+      const res = await fetch(`/api/analyze?q=${encodeURIComponent(q)}&max=100&region=${region}`);
       const data = await res.json();
 
       if (!res.ok) {
@@ -195,6 +209,15 @@ export default function Home() {
                     className="w-full bg-transparent border-none outline-none pl-12 pr-4 py-4 text-lg"
                   />
                 </div>
+                <select
+                  value={region}
+                  onChange={(e) => setRegion(e.target.value)}
+                  className="bg-gray-100 text-gray-700 rounded-lg px-3 py-2 text-sm font-medium border-none outline-none cursor-pointer"
+                >
+                  {regions.map(r => (
+                    <option key={r.code} value={r.code}>{r.code}</option>
+                  ))}
+                </select>
                 <button
                   onClick={() => handleAnalyze()}
                   disabled={loading || !query.trim()}

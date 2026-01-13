@@ -19,7 +19,7 @@ function parseDuration(isoDuration: string): number {
 }
 
 function categorizeDuration(seconds: number): string {
-    if (seconds < 60) return 'Short (<1 min)';
+    if (seconds < 60) return 'Shorts (<1 min)';
     if (seconds < 300) return 'Short (1-5 min)';
     if (seconds < 600) return 'Medium (5-10 min)';
     if (seconds < 1200) return 'Long (10-20 min)';
@@ -265,7 +265,8 @@ Respond in this exact JSON format only, no other text:
 export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const query = searchParams.get('q');
-    const maxResults = Math.min(parseInt(searchParams.get('max') || '50'), 50);
+    const maxResults = Math.min(parseInt(searchParams.get('max') || '100'), 100);
+    const regionCode = searchParams.get('region') || 'US';
 
     if (!query) {
         return NextResponse.json({ error: 'Missing query parameter "q"' }, { status: 400 });
@@ -283,7 +284,8 @@ export async function GET(request: NextRequest) {
                     part: 'snippet',
                     q: query,
                     type: 'video',
-                    maxResults,
+                    maxResults: Math.min(maxResults, 50),
+                    regionCode,
                     key: YOUTUBE_API_KEY
                 }
             }),
@@ -291,12 +293,29 @@ export async function GET(request: NextRequest) {
             getTrendData(query)
         ]);
 
-        const items = searchResponse.data.items;
-        if (!items || items.length === 0) {
+        let allItems = searchResponse.data.items || [];
+
+        // If user wants more than 50, fetch additional pages
+        if (maxResults > 50 && searchResponse.data.nextPageToken) {
+            const secondPageResponse = await axios.get(`${BASE_URL}/search`, {
+                params: {
+                    part: 'snippet',
+                    q: query,
+                    type: 'video',
+                    maxResults: maxResults - 50,
+                    regionCode,
+                    pageToken: searchResponse.data.nextPageToken,
+                    key: YOUTUBE_API_KEY
+                }
+            });
+            allItems = [...allItems, ...(secondPageResponse.data.items || [])];
+        }
+
+        if (allItems.length === 0) {
             return NextResponse.json({ videos: [], analysis: null });
         }
 
-        const videoIds = items.map((item: { id: { videoId: string } }) => item.id.videoId).join(',');
+        const videoIds = allItems.map((item: { id: { videoId: string } }) => item.id.videoId).join(',');
 
         // Get detailed statistics
         const statsResponse = await axios.get(`${BASE_URL}/videos`, {
@@ -351,7 +370,7 @@ export async function GET(request: NextRequest) {
 
         // Duration bucket analysis
         const durationBuckets: Record<string, DurationBucket> = {};
-        const categories = ['Short (<1 min)', 'Short (1-5 min)', 'Medium (5-10 min)', 'Long (10-20 min)', 'Very Long (>20 min)'];
+        const categories = ['Shorts (<1 min)', 'Short (1-5 min)', 'Medium (5-10 min)', 'Long (10-20 min)', 'Very Long (>20 min)'];
 
         categories.forEach(cat => {
             durationBuckets[cat] = { range: cat, count: 0, totalViews: 0, avgViews: 0, videos: [] };
