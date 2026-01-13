@@ -3,7 +3,7 @@ import axios from 'axios';
 import googleTrends from 'google-trends-api';
 
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
-const VISION_API_KEY = process.env.GOOGLE_CLOUD_VISION_API_KEY;
+const VISION_API_KEY = process.env.GOOGLE_CLOUD_VISION_API_KEY || process.env.YOUTUBE_API_KEY;
 const BASE_URL = 'https://www.googleapis.com/youtube/v3';
 
 function parseDuration(isoDuration: string): number {
