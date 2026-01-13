@@ -38,6 +38,8 @@ interface VideoData {
     durationSec: number;
     lengthCategory: string;
     thumbnail: string;
+    isOutlier?: boolean;
+    outlierMultiplier?: number;
 }
 
 // ===== NEW: Loyalty Ratio =====
@@ -373,8 +375,36 @@ export async function GET(request: NextRequest) {
 
         const loyaltyRatio = calculateLoyaltyRatio(channelStats, videosByChannel);
 
+        // ===== NEW: Outlier Detection (1of10 / ViewStats style) =====
+        const totalViews = videos.reduce((sum, v) => sum + v.views, 0);
+        const nicheAvgViews = totalViews / videos.length;
+
+        // Calculate outlier multiplier for each video
+        const videosWithOutliers: VideoData[] = videos.map(video => {
+            const multiplier = nicheAvgViews > 0 ? video.views / nicheAvgViews : 0;
+            return {
+                ...video,
+                outlierMultiplier: Math.round(multiplier * 10) / 10,
+                isOutlier: multiplier >= 2.0
+            };
+        });
+
+        // Get top outliers (sorted by multiplier)
+        const outliers = videosWithOutliers
+            .filter(v => v.isOutlier)
+            .sort((a, b) => (b.outlierMultiplier || 0) - (a.outlierMultiplier || 0));
+
+        const outlierStats = {
+            count: outliers.length,
+            rate: Math.round((outliers.length / videos.length) * 100),
+            topOutliers: outliers.slice(0, 5),
+            avgMultiplier: outliers.length > 0
+                ? Math.round(outliers.reduce((sum, v) => sum + (v.outlierMultiplier || 0), 0) / outliers.length * 10) / 10
+                : 0
+        };
+
         // Sort by views for top performer analysis
-        const sortedByViews = [...videos].sort((a, b) => b.views - a.views);
+        const sortedByViews = [...videosWithOutliers].sort((a, b) => b.views - a.views);
         const topThumbnails = sortedByViews.slice(0, 5).map(v => v.thumbnail);
 
         // Analyze thumbnails (runs async, may be null if no Vision API key)
@@ -388,24 +418,23 @@ export async function GET(request: NextRequest) {
             durationBuckets[cat] = { range: cat, count: 0, totalViews: 0, avgViews: 0, videos: [] };
         });
 
-        videos.forEach(video => {
+        videosWithOutliers.forEach(video => {
             const bucket = durationBuckets[video.lengthCategory];
             bucket.count++;
             bucket.totalViews += video.views;
             bucket.videos.push(video);
         });
 
-        // Calculate baselines
-        const totalViews = videos.reduce((sum, v) => sum + v.views, 0);
-        const overallAvgViews = totalViews / videos.length;
-        const avgCountPerCategory = videos.length / categories.length;
+        // Calculate baselines (use nicheAvgViews already calculated for outliers)
+        const overallAvgViews = nicheAvgViews;
+        const avgCountPerCategory = videosWithOutliers.length / categories.length;
 
         // Calculate averages and scores for each category
         const analysis = categories.map(cat => {
             const bucket = durationBuckets[cat];
             bucket.avgViews = bucket.count > 0 ? Math.round(bucket.totalViews / bucket.count) : 0;
 
-            const competitionScore = bucket.count > 0 ? 1 - (bucket.count / videos.length) : 1;
+            const competitionScore = bucket.count > 0 ? 1 - (bucket.count / videosWithOutliers.length) : 1;
             const demandScore = overallAvgViews > 0 ? bucket.avgViews / overallAvgViews : 0;
             const opportunityScore = competitionScore * demandScore;
 
@@ -556,9 +585,10 @@ export async function GET(request: NextRequest) {
 
         return NextResponse.json({
             query,
-            totalVideos: videos.length,
+            totalVideos: videosWithOutliers.length,
             overallAvgViews: Math.round(overallAvgViews),
-            videos,
+            videos: videosWithOutliers,
+            outlierStats,
             lengthAnalysis: analysis,
             marketHoles: holes,
             optimizationWarning,

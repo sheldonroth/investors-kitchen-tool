@@ -12,6 +12,8 @@ interface VideoData {
   durationSec: number;
   lengthCategory: string;
   thumbnail: string;
+  isOutlier?: boolean;
+  outlierMultiplier?: number;
 }
 
 interface LengthBucket {
@@ -77,11 +79,19 @@ interface ThumbnailAnalysis {
   geminiInsights?: string;
 }
 
+interface OutlierStats {
+  count: number;
+  rate: number;
+  topOutliers: VideoData[];
+  avgMultiplier: number;
+}
+
 interface AnalysisResult {
   query: string;
   totalVideos: number;
   overallAvgViews: number;
   videos: VideoData[];
+  outlierStats: OutlierStats;
   lengthAnalysis: LengthBucket[];
   marketHoles: MarketHole[];
   optimizationWarning: OptimizationWarning | null;
@@ -424,6 +434,46 @@ export default function Home() {
                 </span>
               </div>
             </div>
+
+            {/* Top Outliers Section */}
+            {result.outlierStats.topOutliers.length > 0 && (
+              <div className="card p-6">
+                <div className="section-header">
+                  <div className="section-icon bg-orange-100 text-orange-600">🔥</div>
+                  <h2 className="text-title text-gray-900">
+                    Top Outliers
+                    <span className="ml-2 badge badge-warning">{result.outlierStats.rate}% outlier rate</span>
+                  </h2>
+                </div>
+                <p className="text-sm text-gray-500 mb-4">
+                  Videos performing 2x+ above niche average ({result.outlierStats.count} outliers found)
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                  {result.outlierStats.topOutliers.map((video, i) => (
+                    <a
+                      key={i}
+                      href={`https://youtube.com/watch?v=${video.id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group relative rounded-xl overflow-hidden bg-gray-100 hover:ring-2 hover:ring-orange-400 transition-all"
+                    >
+                      <img
+                        src={video.thumbnail}
+                        alt={video.title}
+                        className="w-full aspect-video object-cover"
+                      />
+                      <div className="absolute top-2 right-2 bg-orange-500 text-white text-xs font-bold px-2 py-1 rounded-full">
+                        {video.outlierMultiplier}x
+                      </div>
+                      <div className="p-2">
+                        <p className="text-xs font-medium text-gray-900 line-clamp-2">{video.title}</p>
+                        <p className="text-xs text-gray-500 mt-1">{formatNumber(video.views)} views</p>
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Opportunities & Insights */}
             <div className="grid md:grid-cols-2 gap-6">
