@@ -2,13 +2,24 @@
 
 import { useState } from 'react';
 import axios from 'axios';
+import {
+    Search,
+    AlertTriangle,
+    Flame,
+    Waves,
+    Target,
+    Image,
+    ArrowLeft,
+    ExternalLink,
+    ChevronRight
+} from 'lucide-react';
 
 type OracleTool = 'failures' | 'blue-ocean' | 'competitor-gaps' | 'momentum' | 'thumbnails';
 
 interface ToolInfo {
     id: OracleTool;
     name: string;
-    icon: string;
+    icon: React.ReactNode;
     description: string;
     inputLabel: string;
     inputPlaceholder: string;
@@ -18,40 +29,40 @@ const TOOLS: ToolInfo[] = [
     {
         id: 'failures',
         name: 'Failure Predictor',
-        icon: '🚫',
-        description: 'Avoid title patterns that kill videos',
+        icon: <AlertTriangle className="w-5 h-5" strokeWidth={1.5} />,
+        description: 'Patterns that kill videos',
         inputLabel: 'Niche',
         inputPlaceholder: 'e.g., cooking tutorials'
     },
     {
         id: 'momentum',
-        name: 'Momentum Detector',
-        icon: '🔥',
-        description: 'Find topics spiking RIGHT NOW',
+        name: 'Momentum',
+        icon: <Flame className="w-5 h-5" strokeWidth={1.5} />,
+        description: 'Topics spiking now',
         inputLabel: 'Topic',
         inputPlaceholder: 'e.g., personal finance'
     },
     {
         id: 'blue-ocean',
-        name: 'Blue Ocean Generator',
-        icon: '🌊',
-        description: 'Create new content categories',
+        name: 'Blue Ocean',
+        icon: <Waves className="w-5 h-5" strokeWidth={1.5} />,
+        description: 'New content categories',
         inputLabel: 'Topic',
         inputPlaceholder: 'e.g., home repair'
     },
     {
         id: 'competitor-gaps',
-        name: 'Competitor Gap Finder',
-        icon: '🎯',
-        description: 'Find what competitors missed',
+        name: 'Competitor Gaps',
+        icon: <Target className="w-5 h-5" strokeWidth={1.5} />,
+        description: 'What they missed',
         inputLabel: 'Niche',
         inputPlaceholder: 'e.g., fitness'
     },
     {
         id: 'thumbnails',
-        name: 'Thumbnail Scorer',
-        icon: '🖼️',
-        description: 'Learn what thumbnails work',
+        name: 'Thumbnails',
+        icon: <Image className="w-5 h-5" strokeWidth={1.5} />,
+        description: 'What visuals work',
         inputLabel: 'Niche',
         inputPlaceholder: 'e.g., tech reviews'
     }
@@ -91,98 +102,98 @@ export default function OraclePage() {
     };
 
     return (
-        <div className="min-h-screen bg-slate-950 text-white">
-            {/* Header */}
-            <div className="border-b border-slate-800 bg-slate-950/80 backdrop-blur sticky top-0 z-10">
-                <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+        <div className="min-h-screen bg-neutral-950 text-white">
+            {/* Navigation */}
+            <nav className="border-b border-neutral-800">
+                <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <span className="text-2xl">🔮</span>
-                        <span className="font-bold text-xl">The Oracle</span>
-                        <span className="text-xs text-slate-500 ml-2">5 tools that eliminate guesswork</span>
+                        <div className="w-8 h-8 rounded-lg bg-neutral-800 flex items-center justify-center">
+                            <Search className="w-4 h-4 text-neutral-400" strokeWidth={1.5} />
+                        </div>
+                        <span className="font-medium">Oracle</span>
                     </div>
-                    <a href="/" className="text-sm text-slate-400 hover:text-white">← Evaluator</a>
+                    <a href="/" className="flex items-center gap-2 text-sm text-neutral-500 hover:text-white transition-colors">
+                        <ArrowLeft className="w-4 h-4" strokeWidth={1.5} />
+                        Back
+                    </a>
                 </div>
-            </div>
+            </nav>
 
-            <div className="max-w-6xl mx-auto px-4 py-8">
+            <div className="max-w-5xl mx-auto px-6 py-12">
                 {/* Tool Selector */}
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-8">
+                <div className="grid grid-cols-5 gap-3 mb-12">
                     {TOOLS.map(tool => (
                         <button
                             key={tool.id}
                             onClick={() => { setSelectedTool(tool.id); setResult(null); setQuery(''); }}
                             className={`p-4 rounded-xl border transition-all text-left ${selectedTool === tool.id
-                                ? 'bg-purple-900/30 border-purple-500 ring-2 ring-purple-500/50'
-                                : 'bg-slate-900/50 border-slate-700 hover:border-slate-500'
+                                    ? 'bg-neutral-900 border-neutral-700'
+                                    : 'bg-transparent border-neutral-800 hover:border-neutral-700'
                                 }`}
                         >
-                            <div className="text-2xl mb-2">{tool.icon}</div>
-                            <div className="font-medium text-sm">{tool.name}</div>
-                            <div className="text-xs text-slate-400 mt-1">{tool.description}</div>
+                            <div className={`mb-3 ${selectedTool === tool.id ? 'text-white' : 'text-neutral-500'}`}>
+                                {tool.icon}
+                            </div>
+                            <p className={`text-sm font-medium ${selectedTool === tool.id ? 'text-white' : 'text-neutral-400'}`}>
+                                {tool.name}
+                            </p>
+                            <p className="text-xs text-neutral-600 mt-1">{tool.description}</p>
                         </button>
                     ))}
                 </div>
 
                 {/* Search */}
-                <div className="bg-slate-900/50 rounded-2xl p-6 border border-slate-800 mb-8">
-                    <div className="flex gap-3">
+                <div className="max-w-2xl mx-auto mb-12">
+                    <div className="flex items-center gap-3 p-4 bg-neutral-900 rounded-xl border border-neutral-800 focus-within:border-neutral-700 transition-colors">
+                        <Search className="w-5 h-5 text-neutral-500" strokeWidth={1.5} />
                         <input
                             type="text"
                             value={query}
                             onChange={(e) => setQuery(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleAnalyze()}
                             placeholder={currentTool.inputPlaceholder}
-                            className="flex-1 px-4 py-3 bg-slate-800 border border-slate-700 rounded-xl text-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                            className="flex-1 bg-transparent text-lg text-white placeholder-neutral-600 focus:outline-none"
                         />
                         <button
                             onClick={handleAnalyze}
                             disabled={loading || !query.trim()}
-                            className="px-8 py-3 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-500 disabled:opacity-50"
+                            className="px-5 py-2 bg-white text-neutral-900 text-sm font-medium rounded-lg hover:bg-neutral-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                         >
-                            {loading ? 'Analyzing...' : `Run ${currentTool.name}`}
+                            {loading ? 'Analyzing...' : 'Analyze'}
                         </button>
                     </div>
                 </div>
 
                 {/* Loading */}
                 {loading && (
-                    <div className="text-center py-12">
-                        <div className="text-4xl mb-4 animate-pulse">🔮</div>
-                        <p className="text-slate-400">The Oracle is analyzing...</p>
+                    <div className="flex flex-col items-center py-16">
+                        <div className="w-8 h-8 border-2 border-neutral-700 border-t-white rounded-full animate-spin mb-4" />
+                        <p className="text-neutral-500 text-sm">Processing...</p>
                     </div>
                 )}
 
                 {/* Results */}
                 {result && !loading && (
                     <div className="space-y-6">
-                        {/* Insight Banner */}
+                        {/* Insight */}
                         {'insight' in result && (
-                            <div className="bg-gradient-to-r from-purple-900/30 to-slate-900 rounded-2xl p-6 border border-purple-500/30">
-                                <div className="text-lg font-medium text-purple-300">
-                                    {result.insight as string}
-                                </div>
+                            <div className="bg-neutral-900 rounded-xl p-6 border border-neutral-800">
+                                <p className="text-neutral-300">{result.insight as string}</p>
                             </div>
                         )}
 
                         {/* Failure Predictor Results */}
                         {selectedTool === 'failures' && 'failurePatterns' in result && (
                             <div className="space-y-4">
-                                <h2 className="text-xl font-bold flex items-center gap-2">
-                                    <span>🚫</span> Failure Patterns to Avoid
-                                </h2>
+                                <p className="text-sm text-neutral-500 uppercase tracking-wide">Patterns to avoid</p>
                                 <div className="grid md:grid-cols-2 gap-4">
                                     {(result.failurePatterns as Array<{ pattern: string; failureRate: number; advice: string; examples: string[] }>).map((pattern, i) => (
-                                        <div key={i} className="bg-red-900/20 rounded-xl p-4 border border-red-500/30">
-                                            <div className="flex justify-between items-start mb-2">
-                                                <span className="font-bold text-red-400">{pattern.pattern}</span>
-                                                <span className="text-red-500 font-bold">{pattern.failureRate}% fail rate</span>
+                                        <div key={i} className="bg-neutral-900 rounded-xl p-5 border border-neutral-800">
+                                            <div className="flex items-start justify-between mb-3">
+                                                <span className="text-white font-medium">{pattern.pattern}</span>
+                                                <span className="text-rose-400 text-sm">{pattern.failureRate}% fail</span>
                                             </div>
-                                            <p className="text-sm text-slate-300 mb-2">{pattern.advice}</p>
-                                            {pattern.examples.length > 0 && (
-                                                <div className="text-xs text-slate-500">
-                                                    Example: &quot;{pattern.examples[0]?.substring(0, 50)}...&quot;
-                                                </div>
-                                            )}
+                                            <p className="text-sm text-neutral-400">{pattern.advice}</p>
                                         </div>
                                     ))}
                                 </div>
@@ -192,30 +203,20 @@ export default function OraclePage() {
                         {/* Momentum Results */}
                         {selectedTool === 'momentum' && 'opportunities' in result && (
                             <div className="space-y-4">
-                                <h2 className="text-xl font-bold flex items-center gap-2">
-                                    <span>🔥</span> Momentum Opportunities
-                                </h2>
+                                <p className="text-sm text-neutral-500 uppercase tracking-wide">Momentum opportunities</p>
                                 <div className="space-y-3">
                                     {(result.opportunities as Array<{ topic: string; momentumScore: number; urgency: string; trendGrowth: string; recentVideosCount: number; reasoning: string }>).map((opp, i) => (
-                                        <div key={i} className={`rounded-xl p-4 border ${opp.urgency.includes('Critical') ? 'bg-orange-900/20 border-orange-500/50' :
-                                            opp.urgency.includes('High') ? 'bg-yellow-900/20 border-yellow-500/50' :
-                                                'bg-slate-800/50 border-slate-700'
+                                        <div key={i} className={`rounded-xl p-5 border ${opp.momentumScore >= 70 ? 'bg-amber-950/30 border-amber-800/50' : 'bg-neutral-900 border-neutral-800'
                                             }`}>
-                                            <div className="flex justify-between items-start mb-2">
+                                            <div className="flex items-start justify-between mb-2">
                                                 <div>
-                                                    <span className="font-bold text-lg">{opp.topic}</span>
-                                                    <span className="ml-3 text-sm text-green-400">{opp.trendGrowth}</span>
+                                                    <span className="text-white font-medium">{opp.topic}</span>
+                                                    <span className="ml-3 text-sm text-emerald-400">{opp.trendGrowth}</span>
                                                 </div>
-                                                <div className="text-right">
-                                                    <div className="text-2xl font-bold">{opp.momentumScore}</div>
-                                                    <div className="text-xs text-slate-400">score</div>
-                                                </div>
+                                                <span className="text-2xl font-light text-white">{opp.momentumScore}</span>
                                             </div>
-                                            <div className="text-sm text-slate-400 mb-2">{opp.urgency}</div>
-                                            <div className="text-sm text-slate-300">{opp.reasoning}</div>
-                                            <div className="text-xs text-slate-500 mt-2">
-                                                {opp.recentVideosCount} videos in last 7 days
-                                            </div>
+                                            <p className="text-sm text-neutral-400">{opp.reasoning}</p>
+                                            <p className="text-xs text-neutral-600 mt-2">{opp.recentVideosCount} videos in last 7 days</p>
                                         </div>
                                     ))}
                                 </div>
@@ -225,24 +226,21 @@ export default function OraclePage() {
                         {/* Blue Ocean Results */}
                         {selectedTool === 'blue-ocean' && 'blueOceans' in result && (
                             <div className="space-y-4">
-                                <h2 className="text-xl font-bold flex items-center gap-2">
-                                    <span>🌊</span> New Category Opportunities
-                                </h2>
+                                <p className="text-sm text-neutral-500 uppercase tracking-wide">New category opportunities</p>
                                 <div className="grid md:grid-cols-2 gap-4">
                                     {(result.blueOceans as Array<{ combination: string; format: string; opportunityScore: number; supplyLevel: string; existingVideos: number; reasoning: string }>).map((bo, i) => (
-                                        <div key={i} className={`rounded-xl p-4 border ${bo.existingVideos === 0 ? 'bg-green-900/20 border-green-500/50' :
-                                            'bg-slate-800/50 border-slate-700'
+                                        <div key={i} className={`rounded-xl p-5 border ${bo.existingVideos === 0 ? 'bg-emerald-950/30 border-emerald-800/50' : 'bg-neutral-900 border-neutral-800'
                                             }`}>
-                                            <div className="flex justify-between items-start mb-2">
-                                                <span className="font-bold">{bo.combination}</span>
-                                                <span className={`font-bold ${bo.opportunityScore >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
+                                            <div className="flex items-start justify-between mb-2">
+                                                <span className="text-white font-medium">{bo.combination}</span>
+                                                <span className={`text-lg font-light ${bo.opportunityScore >= 70 ? 'text-emerald-400' : 'text-neutral-400'}`}>
                                                     {bo.opportunityScore}
                                                 </span>
                                             </div>
-                                            <div className="text-sm text-slate-400 mb-2">
-                                                Format: {bo.format} • {bo.supplyLevel} supply ({bo.existingVideos} videos)
-                                            </div>
-                                            <div className="text-sm text-slate-300">{bo.reasoning}</div>
+                                            <p className="text-sm text-neutral-500 mb-2">
+                                                {bo.format} format · {bo.supplyLevel} supply
+                                            </p>
+                                            <p className="text-sm text-neutral-400">{bo.reasoning}</p>
                                         </div>
                                     ))}
                                 </div>
@@ -252,28 +250,22 @@ export default function OraclePage() {
                         {/* Competitor Gaps Results */}
                         {selectedTool === 'competitor-gaps' && 'analysis' in result && (
                             <div className="space-y-4">
-                                <h2 className="text-xl font-bold flex items-center gap-2">
-                                    <span>🎯</span> Content Gaps Found
-                                </h2>
-                                <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700 mb-4">
-                                    <div className="text-sm text-slate-400">Analyzing channel:</div>
-                                    <div className="font-bold text-lg">{(result.analysis as { channelTitle: string; subscriberCount: number }).channelTitle}</div>
-                                    <div className="text-sm text-slate-500">{formatNumber((result.analysis as { subscriberCount: number }).subscriberCount)} subscribers</div>
+                                <div className="bg-neutral-900 rounded-xl p-5 border border-neutral-800 mb-6">
+                                    <p className="text-sm text-neutral-500 mb-1">Analyzing</p>
+                                    <p className="text-white font-medium">{(result.analysis as { channelTitle: string }).channelTitle}</p>
+                                    <p className="text-sm text-neutral-500">{formatNumber((result.analysis as { subscriberCount: number }).subscriberCount)} subscribers</p>
                                 </div>
+                                <p className="text-sm text-neutral-500 uppercase tracking-wide">Content gaps</p>
                                 <div className="space-y-3">
                                     {((result.analysis as { contentGaps: Array<{ topic: string; gapScore: number; lastCoveredDaysAgo: number | null; searchDemand: number; reason: string }> }).contentGaps).map((gap, i) => (
-                                        <div key={i} className="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
-                                            <div className="flex justify-between items-start mb-2">
-                                                <span className="font-bold">{gap.topic}</span>
-                                                <span className={`font-bold ${gap.gapScore >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
-                                                    Gap Score: {gap.gapScore}
+                                        <div key={i} className="bg-neutral-900 rounded-xl p-5 border border-neutral-800">
+                                            <div className="flex items-start justify-between mb-2">
+                                                <span className="text-white font-medium">{gap.topic}</span>
+                                                <span className={`font-light ${gap.gapScore >= 70 ? 'text-emerald-400' : 'text-neutral-400'}`}>
+                                                    {gap.gapScore}
                                                 </span>
                                             </div>
-                                            <div className="text-sm text-slate-300">{gap.reason}</div>
-                                            <div className="text-xs text-slate-500 mt-2">
-                                                {gap.lastCoveredDaysAgo ? `Last covered ${gap.lastCoveredDaysAgo} days ago` : 'Never covered'}
-                                                {' • '}Search demand: {gap.searchDemand}/100
-                                            </div>
+                                            <p className="text-sm text-neutral-400">{gap.reason}</p>
                                         </div>
                                     ))}
                                 </div>
@@ -282,37 +274,34 @@ export default function OraclePage() {
 
                         {/* Thumbnail Results */}
                         {selectedTool === 'thumbnails' && 'patterns' in result && (
-                            <div className="space-y-4">
-                                <h2 className="text-xl font-bold flex items-center gap-2">
-                                    <span>🖼️</span> Thumbnail Patterns in This Niche
-                                </h2>
-                                <div className="grid md:grid-cols-2 gap-4">
-                                    {(result.patterns as Array<{ pattern: string; prevalence: number; correlation: string; recommendation: string }>).map((pattern, i) => (
-                                        <div key={i} className="bg-slate-800/50 rounded-xl p-4 border border-slate-700">
-                                            <div className="flex justify-between items-start mb-2">
-                                                <span className="font-bold">{pattern.pattern}</span>
-                                                <span className={`font-bold ${pattern.correlation === 'Strong' ? 'text-green-400' : 'text-yellow-400'
-                                                    }`}>
-                                                    {pattern.prevalence}%
-                                                </span>
+                            <div className="space-y-6">
+                                <div>
+                                    <p className="text-sm text-neutral-500 uppercase tracking-wide mb-4">Patterns in this niche</p>
+                                    <div className="grid md:grid-cols-2 gap-4">
+                                        {(result.patterns as Array<{ pattern: string; prevalence: number; correlation: string; recommendation: string }>).map((pattern, i) => (
+                                            <div key={i} className="bg-neutral-900 rounded-xl p-5 border border-neutral-800">
+                                                <div className="flex items-start justify-between mb-2">
+                                                    <span className="text-white font-medium">{pattern.pattern}</span>
+                                                    <span className={`text-sm ${pattern.correlation === 'Strong' ? 'text-emerald-400' : 'text-neutral-500'}`}>
+                                                        {pattern.prevalence}%
+                                                    </span>
+                                                </div>
+                                                <p className="text-sm text-neutral-400">{pattern.recommendation}</p>
                                             </div>
-                                            <div className="text-sm text-slate-300">{pattern.recommendation}</div>
-                                        </div>
-                                    ))}
+                                        ))}
+                                    </div>
                                 </div>
 
-                                {/* Top performers */}
                                 {'topPerformers' in result && (
-                                    <div className="mt-6">
-                                        <h3 className="text-lg font-bold mb-4">Top Performers</h3>
-                                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                                            {(result.topPerformers as Array<{ thumbnailUrl: string; title: string; views: number; keyFeatures: string[] }>).map((video, i) => (
-                                                <div key={i} className="rounded-xl overflow-hidden bg-slate-800/50">
-                                                    <img src={video.thumbnailUrl} alt={video.title} className="w-full aspect-video object-cover" />
-                                                    <div className="p-2">
-                                                        <div className="text-xs text-slate-400 line-clamp-1">{video.title}</div>
-                                                        <div className="text-xs text-green-400">{formatNumber(video.views)} views</div>
+                                    <div>
+                                        <p className="text-sm text-neutral-500 uppercase tracking-wide mb-4">Top performers</p>
+                                        <div className="grid grid-cols-5 gap-4">
+                                            {(result.topPerformers as Array<{ thumbnailUrl: string; title: string; views: number }>).map((video, i) => (
+                                                <div key={i} className="group">
+                                                    <div className="aspect-video rounded-lg overflow-hidden bg-neutral-800 mb-2">
+                                                        <img src={video.thumbnailUrl} alt={video.title} className="w-full h-full object-cover" />
                                                     </div>
+                                                    <p className="text-xs text-neutral-500">{formatNumber(video.views)} views</p>
                                                 </div>
                                             ))}
                                         </div>
@@ -325,9 +314,11 @@ export default function OraclePage() {
 
                 {/* Empty state */}
                 {!result && !loading && (
-                    <div className="text-center py-12 text-slate-500">
-                        <div className="text-6xl mb-4">{currentTool.icon}</div>
-                        <p>Enter a {currentTool.inputLabel.toLowerCase()} to run the {currentTool.name}</p>
+                    <div className="text-center py-16">
+                        <div className="w-12 h-12 rounded-xl bg-neutral-900 flex items-center justify-center mx-auto mb-4">
+                            {currentTool.icon}
+                        </div>
+                        <p className="text-neutral-500 text-sm">Enter a {currentTool.inputLabel.toLowerCase()} to analyze</p>
                     </div>
                 )}
             </div>
