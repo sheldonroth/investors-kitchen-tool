@@ -112,9 +112,15 @@ export default function Home() {
         <h1 className="text-4xl font-bold text-gray-900 mb-3">
           YouTube Video Idea Evaluator
         </h1>
-        <p className="text-lg text-gray-500 mb-8">
+        <p className="text-lg text-gray-500 mb-4">
           Is your idea worth making? What should you title it?
         </p>
+        <a
+          href="/gaps"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-full hover:bg-slate-800 transition-colors mb-8"
+        >
+          📊 Find Content Gaps →
+        </a>
 
         {/* Search */}
         <div className="flex gap-2 max-w-xl mx-auto">
@@ -161,15 +167,15 @@ export default function Home() {
 
           {/* Question 1: Is this idea good? */}
           <div className={`rounded-2xl p-8 ${result.viability.score >= 70 ? 'bg-green-50 border-2 border-green-200' :
-              result.viability.score >= 45 ? 'bg-yellow-50 border-2 border-yellow-200' :
-                'bg-red-50 border-2 border-red-200'
+            result.viability.score >= 45 ? 'bg-yellow-50 border-2 border-yellow-200' :
+              'bg-red-50 border-2 border-red-200'
             }`}>
             <div className="flex items-center justify-between mb-4">
               <div>
                 <div className="text-sm font-medium text-gray-500 uppercase tracking-wide">Idea Viability</div>
                 <div className={`text-5xl font-bold ${result.viability.score >= 70 ? 'text-green-600' :
-                    result.viability.score >= 45 ? 'text-yellow-600' :
-                      'text-red-600'
+                  result.viability.score >= 45 ? 'text-yellow-600' :
+                    'text-red-600'
                   }`}>
                   {result.viability.score}/100
                 </div>
@@ -179,8 +185,8 @@ export default function Home() {
               </div>
             </div>
             <div className={`text-xl font-medium ${result.viability.score >= 70 ? 'text-green-700' :
-                result.viability.score >= 45 ? 'text-yellow-700' :
-                  'text-red-700'
+              result.viability.score >= 45 ? 'text-yellow-700' :
+                'text-red-700'
               }`}>
               {result.viability.verdict}
             </div>
@@ -253,8 +259,8 @@ export default function Home() {
                 <div className="bg-white rounded-2xl border border-gray-200 p-6">
                   <div className="text-sm text-gray-500 mb-2">Saturation</div>
                   <div className={`text-4xl font-bold ${result.saturation.label === 'Low' ? 'text-green-600' :
-                      result.saturation.label === 'Medium' ? 'text-yellow-600' :
-                        'text-red-600'
+                    result.saturation.label === 'Medium' ? 'text-yellow-600' :
+                      'text-red-600'
                     }`}>
                     {result.saturation.score}/100
                   </div>
@@ -263,8 +269,8 @@ export default function Home() {
                 <div className="bg-white rounded-2xl border border-gray-200 p-6">
                   <div className="text-sm text-gray-500 mb-2">Search Demand</div>
                   <div className={`text-4xl font-bold ${result.demand.score >= 60 ? 'text-green-600' :
-                      result.demand.score >= 40 ? 'text-yellow-600' :
-                        'text-red-600'
+                    result.demand.score >= 40 ? 'text-yellow-600' :
+                      'text-red-600'
                     }`}>
                     {result.demand.score}/100
                   </div>
